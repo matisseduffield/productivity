@@ -1,0 +1,513 @@
+package com.bento.calendar.ui.today
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
+import com.bento.calendar.data.AppData
+import com.bento.calendar.data.Cats
+import com.bento.calendar.data.EventItem
+import com.bento.calendar.data.NoteItem
+import com.bento.calendar.data.TaskItem
+import com.bento.calendar.data.occurrencesOn
+import com.bento.calendar.data.toMins
+import com.bento.calendar.ui.AppViewModel
+import com.bento.calendar.ui.Fmt
+import com.bento.calendar.ui.Tab
+import com.bento.calendar.ui.activeReminder
+import com.bento.calendar.ui.components.BentoCheckbox
+import com.bento.calendar.ui.components.Dot
+import com.bento.calendar.ui.components.GBtn
+import com.bento.calendar.ui.components.tap
+import com.bento.calendar.ui.sortedOpenTasks
+import com.bento.calendar.ui.startOfWeek
+import com.bento.calendar.ui.theme.BentoIcons
+import com.bento.calendar.ui.theme.LocalBento
+import com.bento.calendar.ui.theme.color
+import java.time.LocalDate
+import java.time.LocalDateTime
+
+/**
+ * The Today landing tab: greeting header + bento grid (Up next, Tasks,
+ * Pinned note, This week, Later today) with an optional reminder banner.
+ */
+@Composable
+fun TodayScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
+    val c = LocalBento.current
+    val today = now.toLocalDate()
+    val nowMin = now.hour * 60 + now.minute
+    val use24h = data.prefs.use24h
+
+    val evT = occurrencesOn(data.events, today)
+    val nx = evT.firstOrNull { it.end.toMins() > nowMin }
+    val openTasks = sortedOpenTasks(data.tasks, today)
+
+    Column(Modifier.fillMaxSize()) {
+        // ---- Header (.ahd) ----
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 20.dp, end = 20.dp, top = 10.dp),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    Fmt.greeting(now.hour),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.W500,
+                    color = c.sub,
+                )
+                Text(
+                    Fmt.todayTitle(today),
+                    fontSize = 21.sp,
+                    fontWeight = FontWeight.W700,
+                    letterSpacing = (-0.01).em,
+                    color = c.tx,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                GBtn(onClick = { vm.openFab() }, primary = true) {
+                    Icon(BentoIcons.Plus, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                }
+                GBtn(onClick = { vm.openSearch() }) {
+                    Icon(BentoIcons.Search, null, tint = c.sub, modifier = Modifier.size(18.dp))
+                }
+                GBtn(onClick = { vm.openSettings() }) {
+                    Icon(BentoIcons.Sliders, null, tint = c.sub, modifier = Modifier.size(19.dp))
+                }
+            }
+        }
+
+        // ---- Scrollable body (.abody) ----
+        Column(
+            Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(start = 18.dp, end = 18.dp, top = 2.dp, bottom = 14.dp),
+        ) {
+            // Reminder banner (.notif)
+            val banner = activeReminder(data.events, today, nowMin, vm.dismissed)
+            if (banner != null) {
+                ReminderBannerCard(
+                    title = banner.event.title,
+                    sub = (if (banner.minsUntil <= 0) "Starting now" else "In ${banner.minsUntil} min") +
+                        (if (banner.event.loc.isNotEmpty()) " · ${banner.event.loc}" else ""),
+                    onDismiss = { vm.dismissReminder(banner.key) },
+                )
+            }
+
+            // Bento grid (.bgrid): 2 columns, 10dp gap, 14dp top margin.
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                UpNextTile(vm, evT, nx, nowMin, use24h)
+
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(IntrinsicSize.Min),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    TasksTile(vm, openTasks, Modifier.weight(1f).fillMaxHeight())
+                    PinnedNoteTile(vm, data, now, use24h, Modifier.weight(1f).fillMaxHeight())
+                }
+
+                ThisWeekTile(vm, data, today)
+
+                LaterTodayTile(vm, evT, nx, use24h)
+            }
+        }
+    }
+}
+
+/** Bento tile chrome (.bt): tile bg, 1dp border, 19dp radius, 15dp padding. */
+@Composable
+private fun Tile(
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val c = LocalBento.current
+    Column(
+        modifier
+            .then(if (onClick != null) Modifier.tap(onClick = onClick) else Modifier)
+            .background(c.tile, RoundedCornerShape(19.dp))
+            .border(1.dp, c.bd, RoundedCornerShape(19.dp))
+            .padding(15.dp),
+        content = content,
+    )
+}
+
+/** Tile eyebrow (.bt-eb): 9.5sp/700, 0.14em tracking, optional leading lock icon. */
+@Composable
+private fun Eyebrow(text: String, color: Color, lockIcon: Boolean = false) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        if (lockIcon) {
+            Icon(BentoIcons.Lock, null, tint = color, modifier = Modifier.size(11.dp))
+        }
+        Text(
+            text,
+            fontSize = 9.5.sp,
+            fontWeight = FontWeight.W700,
+            letterSpacing = 0.14.em,
+            color = color,
+        )
+    }
+}
+
+/** Accent-tinted reminder banner (.notif) above the grid. */
+@Composable
+private fun ReminderBannerCard(title: String, sub: String, onDismiss: () -> Unit) {
+    val c = LocalBento.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp)
+            .background(c.accTint(0.14f).compositeOver(c.tile), RoundedCornerShape(16.dp))
+            .border(1.dp, c.accTint(0.35f).compositeOver(c.bd), RoundedCornerShape(16.dp))
+            .padding(horizontal = 13.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(11.dp),
+    ) {
+        Icon(BentoIcons.Bell, null, tint = c.acc, modifier = Modifier.size(17.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, fontSize = 12.5.sp, fontWeight = FontWeight.W600, color = c.tx)
+            Text(sub, fontSize = 11.sp, color = c.sub, modifier = Modifier.padding(top = 1.dp))
+        }
+        Box(
+            Modifier
+                .tap(onClick = onDismiss)
+                .padding(4.dp),
+        ) {
+            Icon(BentoIcons.Close, null, tint = c.faint, modifier = Modifier.size(14.dp))
+        }
+    }
+}
+
+/** Up next tile (span 2). */
+@Composable
+private fun UpNextTile(
+    vm: AppViewModel,
+    evT: List<EventItem>,
+    nx: EventItem?,
+    nowMin: Int,
+    use24h: Boolean,
+) {
+    val c = LocalBento.current
+    val eyebrow = when {
+        nx != null && nx.start.toMins() <= nowMin -> "HAPPENING NOW"
+        nx != null -> "UP NEXT · ${Fmt.time(nx.start, use24h)}"
+        evT.isNotEmpty() -> "ALL DONE FOR TODAY"
+        else -> "TODAY"
+    }
+    val title = nx?.title ?: if (evT.isNotEmpty()) "Nothing else scheduled" else "No events today"
+    val meta = if (nx != null) {
+        "${Fmt.time(nx.start, use24h)} – ${Fmt.time(nx.end, use24h)} · ${Cats.of(nx.cat).label}" +
+            if (nx.start.toMins() > nowMin) " · ${Fmt.countdown(nx.start.toMins() - nowMin)}" else ""
+    } else {
+        "Tap to add an event"
+    }
+    Tile(
+        Modifier.fillMaxWidth(),
+        onClick = { if (nx != null) vm.openEvent(nx) else vm.newEvent() },
+    ) {
+        Eyebrow(eyebrow, c.acc)
+        Text(
+            title,
+            fontSize = 19.sp,
+            fontWeight = FontWeight.W700,
+            letterSpacing = (-0.01).em,
+            color = c.tx,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+        Text(meta, fontSize = 12.sp, color = c.sub, modifier = Modifier.padding(top = 4.dp))
+        if (nx != null && nx.loc.isNotEmpty()) {
+            Row(
+                Modifier
+                    .padding(top = 12.dp)
+                    .background(c.acc, RoundedCornerShape(12.dp))
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                Icon(BentoIcons.LocationPin, null, tint = Color.White, modifier = Modifier.size(12.dp))
+                Text(nx.loc, fontSize = 12.sp, fontWeight = FontWeight.W700, color = Color.White)
+            }
+        }
+    }
+}
+
+/** Tasks tile: top 3 open tasks with mini checkboxes. */
+@Composable
+private fun TasksTile(
+    vm: AppViewModel,
+    openTasks: List<TaskItem>,
+    modifier: Modifier = Modifier,
+) {
+    val c = LocalBento.current
+    Tile(modifier) {
+        Eyebrow("TASKS · ${openTasks.size} OPEN", c.sub)
+        Column(Modifier.padding(top = 8.dp)) {
+            openTasks.take(3).forEach { t ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .tap { vm.toggleTask(t.id) }
+                        .padding(vertical = 5.5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(9.dp),
+                ) {
+                    BentoCheckbox(
+                        checked = t.done,
+                        onToggle = { vm.toggleTask(t.id) },
+                        size = 17.dp,
+                        corner = 6.dp,
+                    )
+                    Text(
+                        t.title,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.W500,
+                        color = c.tx,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+            if (openTasks.size > 3) {
+                Text(
+                    "+${openTasks.size - 3} more",
+                    fontSize = 12.sp,
+                    color = c.sub,
+                    modifier = Modifier
+                        .padding(top = 4.dp)
+                        .tap { vm.setTab(Tab.Tasks) },
+                )
+            }
+            if (openTasks.isEmpty()) {
+                Text(
+                    "All clear",
+                    fontSize = 12.sp,
+                    color = c.sub,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+        }
+    }
+}
+
+/** Pinned note tile: most recently updated pinned note (or empty copy). */
+@Composable
+private fun PinnedNoteTile(
+    vm: AppViewModel,
+    data: AppData,
+    now: LocalDateTime,
+    use24h: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val c = LocalBento.current
+    val pn: NoteItem? = data.notes.filter { it.pinned }.maxByOrNull { it.updated }
+    val title = if (pn != null) pn.title.ifEmpty { "Untitled" } else "No pinned note"
+    val preview = when {
+        pn == null -> "Pin a note to keep it handy"
+        pn.locked -> "•••• •••• ••••"
+        else -> pn.body.lineSequence().firstOrNull { it.isNotBlank() } ?: "No content"
+    }
+    val sub = when {
+        pn == null -> ""
+        pn.locked -> "Locked · tap to unlock"
+        else -> Fmt.relEdit(pn.updated, now, use24h)
+    }
+    Tile(
+        modifier,
+        onClick = { if (pn != null) vm.openNote(pn.id) else vm.setTab(Tab.Notes) },
+    ) {
+        Eyebrow("PINNED NOTE", c.sub, lockIcon = pn?.locked == true)
+        Text(
+            title,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.W600,
+            color = c.tx,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+        Text(
+            preview,
+            fontSize = 12.sp,
+            letterSpacing = 0.14.em,
+            color = c.faint,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 5.dp),
+        )
+        if (sub.isNotEmpty()) {
+            Text(sub, fontSize = 12.sp, color = c.sub, modifier = Modifier.padding(top = 7.dp))
+        } else {
+            Spacer(Modifier.height(7.dp))
+        }
+    }
+}
+
+/** This week tile (span 2): 7 day columns with dots. */
+@Composable
+private fun ThisWeekTile(vm: AppViewModel, data: AppData, today: LocalDate) {
+    val c = LocalBento.current
+    val wkStart = startOfWeek(today, data.prefs.monday)
+    Tile(Modifier.fillMaxWidth()) {
+        Eyebrow("THIS WEEK", c.sub)
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(top = 10.dp),
+        ) {
+            for (i in 0..6) {
+                val d = wkStart.plusDays(i.toLong())
+                val isToday = d == today
+                val catIds = LinkedHashSet<String>()
+                for (e in occurrencesOn(data.events, d)) {
+                    catIds.add(Cats.of(e.cat).id)
+                }
+                val dots = catIds.take(3).map { Cats.of(it).color }
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .tap { vm.weekStripTap(d) },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    Text(
+                        "SMTWTFS"[Fmt.dow(d)].toString(),
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.W600,
+                        letterSpacing = 0.04.em,
+                        color = c.faint,
+                    )
+                    Box(
+                        Modifier
+                            .widthIn(min = 24.dp)
+                            .then(
+                                if (isToday) {
+                                    Modifier.background(c.acc, RoundedCornerShape(8.dp))
+                                } else {
+                                    Modifier
+                                }
+                            )
+                            .padding(vertical = 1.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            "${d.dayOfMonth}",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.W600,
+                            color = if (isToday) Color.White else c.tx,
+                        )
+                    }
+                    Row(
+                        Modifier
+                            .padding(top = 2.dp)
+                            .height(4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(2.5.dp),
+                    ) {
+                        dots.forEach { Dot(it, size = 4.dp) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Later today tile (span 2): remaining events after the "up next" one. */
+@Composable
+private fun LaterTodayTile(
+    vm: AppViewModel,
+    evT: List<EventItem>,
+    nx: EventItem?,
+    use24h: Boolean,
+) {
+    val c = LocalBento.current
+    val later = if (nx != null) evT.filter { it.start.toMins() > nx.start.toMins() } else emptyList()
+    Tile(Modifier.fillMaxWidth()) {
+        Eyebrow("LATER TODAY", c.sub)
+        if (later.isNotEmpty()) {
+            Column(Modifier.padding(top = 7.dp)) {
+                later.forEach { e ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .tap { vm.openEvent(e) }
+                            .padding(vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Text(
+                            Fmt.time(e.start, use24h),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.W600,
+                            color = c.sub,
+                            style = LocalTextStyle.current.copy(fontFeatureSettings = "tnum"),
+                            modifier = Modifier.width(48.dp),
+                        )
+                        Text(
+                            e.title,
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.W500,
+                            color = c.tx,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Dot(Cats.of(e.cat).color)
+                    }
+                }
+            }
+        } else {
+            Text(
+                if (evT.isNotEmpty()) "That was the last one — evening is yours" else "Nothing scheduled",
+                fontSize = 12.sp,
+                color = c.faint,
+                modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
+            )
+        }
+    }
+}

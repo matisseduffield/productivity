@@ -1,4 +1,4 @@
-package com.bento.calendar.ui
+﻿package com.bento.calendar.ui
 
 import android.app.Application
 import androidx.compose.runtime.getValue
@@ -86,18 +86,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val now: StateFlow<LocalDateTime> = _now
 
     // ---- Transient UI state ----
-    var tab by mutableStateOf(Tab.Today)
-        private set
-    var calView by mutableStateOf(CalView.Month)
-        private set
+    private var tabState by mutableStateOf(Tab.Today)
+    val tab: Tab get() = tabState
+    private var calViewState by mutableStateOf(CalView.Month)
+    val calView: CalView get() = calViewState
     var selDate: LocalDate by mutableStateOf(LocalDate.now())
         private set
     var cursor: YearMonth by mutableStateOf(YearMonth.now())
         private set
     var searchOpen by mutableStateOf(false)
         private set
-    var query by mutableStateOf("")
-        private set
+    private var queryState by mutableStateOf("")
+    val query: String get() = queryState
     var settingsOpen by mutableStateOf(false)
         private set
     var fabOpen by mutableStateOf(false)
@@ -177,7 +177,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- Tabs & navigation ----
     fun setTab(t: Tab) {
-        tab = t
+        tabState = t
         searchOpen = false
     }
 
@@ -220,7 +220,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- Calendar ----
     fun setCalView(v: CalView) {
-        calView = v
+        calViewState = v
     }
 
     fun calPrev() {
@@ -247,7 +247,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Month cell: tap selects, tapping the selected day opens Day view. */
     fun tapMonthCell(date: LocalDate) {
         if (selDate == date) {
-            calView = CalView.Day
+            calViewState = CalView.Day
         } else {
             selDate = date
             cursor = YearMonth.from(date)
@@ -261,8 +261,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Today-tab week strip: jump to Day view of that date. */
     fun weekStripTap(date: LocalDate) {
-        tab = Tab.Calendar
-        calView = CalView.Day
+        tabState = Tab.Calendar
+        calViewState = CalView.Day
         selDate = date
         cursor = YearMonth.from(date)
     }
@@ -378,7 +378,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         disarm(Arm.TASK)
         searchOpen = false
         fabOpen = false
-        tab = Tab.Tasks
+        tabState = Tab.Tasks
     }
 
     fun newTask() {
@@ -455,7 +455,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             x.copy(notes = x.notes + NoteItem(id = id, updated = System.currentTimeMillis()))
         }
         openNoteId = id
-        tab = Tab.Notes
+        tabState = Tab.Notes
         fabOpen = false
         disarm(Arm.NOTE)
     }
@@ -608,7 +608,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // ---- Search ----
     fun openSearch() {
         searchOpen = true
-        query = ""
+        queryState = ""
     }
 
     fun closeSearch() {
@@ -616,7 +616,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setQuery(q: String) {
-        query = q
+        queryState = q
     }
 
     // ---- Reminder banner ----

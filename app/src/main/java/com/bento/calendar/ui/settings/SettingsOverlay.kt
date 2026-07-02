@@ -1,0 +1,377 @@
+package com.bento.calendar.ui.settings
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
+import com.bento.calendar.data.Accents
+import com.bento.calendar.data.AppData
+import com.bento.calendar.ui.AppViewModel
+import com.bento.calendar.ui.Arm
+import com.bento.calendar.ui.components.BentoSelectField
+import com.bento.calendar.ui.components.BentoSwitch
+import com.bento.calendar.ui.components.FullOverlay
+import com.bento.calendar.ui.components.SectionLabel
+import com.bento.calendar.ui.components.TextLink
+import com.bento.calendar.ui.components.hairlineBottom
+import com.bento.calendar.ui.components.pressable
+import com.bento.calendar.ui.theme.BentoIcons
+import com.bento.calendar.ui.theme.LocalBento
+import com.bento.calendar.ui.theme.hexColor
+import java.time.LocalDateTime
+
+/** Full-page Settings overlay (prototype markup 226-251, logic 654-673). */
+@Composable
+fun SettingsOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
+    val c = LocalBento.current
+    val prefs = data.prefs
+    FullOverlay {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding(),
+        ) {
+            // Top bar (.ne-hd override: flex-start, gap 12, padding 12px 16px 6px)
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Box(
+                    Modifier
+                        .size(36.dp)
+                        .pressable { vm.closeSheets() }
+                        .background(c.tile, CircleShape)
+                        .border(1.dp, c.bd, CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(BentoIcons.ChevronLeft, null, tint = c.sub, modifier = Modifier.size(17.dp))
+                }
+                Text(
+                    "Settings",
+                    fontSize = 21.sp,
+                    fontWeight = FontWeight.W700,
+                    letterSpacing = (-0.01).em,
+                    color = c.tx,
+                )
+            }
+
+            // Scrollable body (.abody override: padding 6px 16px 20px)
+            Column(
+                Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 20.dp),
+            ) {
+                // ---- Appearance ----
+                SectionLabel("Appearance")
+                SettingsCard {
+                    SettingsRow(
+                        icon = BentoIcons.Moon,
+                        title = "Theme",
+                        sub = if (prefs.theme == "dark") "Easy on the eyes" else "Bright and clean",
+                    ) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                            ThemePill("Dark", active = prefs.theme == "dark") { vm.setTheme("dark") }
+                            ThemePill("Light", active = prefs.theme != "dark") { vm.setTheme("light") }
+                        }
+                    }
+                    SettingsRow(
+                        icon = BentoIcons.Droplet,
+                        title = "Accent colour",
+                        sub = Accents.nameOf(prefs.accent),
+                        last = true,
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Accents.ALL.forEach { option ->
+                                AccentSwatch(
+                                    hex = option.hex,
+                                    selected = prefs.accent == option.hex,
+                                ) { vm.setAccent(option.hex) }
+                            }
+                        }
+                    }
+                }
+
+                // ---- Calendar ----
+                SectionLabel("Calendar")
+                SettingsCard {
+                    SettingsRow(
+                        icon = BentoIcons.Clock,
+                        title = "24-hour time",
+                        sub = "14:00 instead of 2:00 pm",
+                    ) {
+                        BentoSwitch(on = prefs.use24h, onToggle = { vm.toggle24h() })
+                    }
+                    SettingsRow(
+                        icon = BentoIcons.TabCalendar,
+                        title = "Week starts Monday",
+                        sub = "All calendar views",
+                    ) {
+                        BentoSwitch(on = prefs.monday, onToggle = { vm.toggleMonday() })
+                    }
+                    SettingsRow(
+                        icon = BentoIcons.Bell,
+                        title = "Default reminder",
+                        sub = "For new events",
+                    ) {
+                        BentoSelectField(
+                            value = prefs.remindDef,
+                            options = listOf<Pair<String, Int?>>(
+                                "None" to null,
+                                "At start" to 0,
+                                "10 min" to 10,
+                                "30 min" to 30,
+                                "1 hour" to 60,
+                            ),
+                            onSelect = { vm.setRemindDef(it) },
+                            compact = true,
+                        )
+                    }
+                    SettingsRow(
+                        icon = BentoIcons.Timer,
+                        title = "Event length",
+                        sub = "For new events",
+                        last = true,
+                    ) {
+                        BentoSelectField(
+                            value = prefs.durDef,
+                            options = listOf(
+                                "30 min" to 30,
+                                "45 min" to 45,
+                                "1 hour" to 60,
+                                "1.5 hours" to 90,
+                                "2 hours" to 120,
+                            ),
+                            onSelect = { vm.setDurDef(it) },
+                            compact = true,
+                        )
+                    }
+                }
+
+                // ---- Tasks ----
+                val doneCount = data.tasks.count { it.done }
+                SectionLabel("Tasks")
+                SettingsCard {
+                    SettingsRow(
+                        icon = BentoIcons.TabTasks,
+                        title = "Clear completed",
+                        sub = if (doneCount > 0) {
+                            "$doneCount completed task" + (if (doneCount > 1) "s" else "")
+                        } else {
+                            "Nothing completed yet"
+                        },
+                        last = true,
+                    ) {
+                        TextLink(
+                            if (vm.isArmed(Arm.CLEAR)) "Sure?" else "Clear",
+                            onClick = { vm.clearCompleted() },
+                        )
+                    }
+                }
+
+                // ---- Notes & privacy ----
+                val hasPin = data.pin != null
+                SectionLabel("Notes & privacy")
+                SettingsCard {
+                    SettingsRow(
+                        icon = BentoIcons.Lock,
+                        title = "Notes PIN",
+                        sub = if (hasPin) "PIN is set" else "No PIN yet",
+                        last = true,
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            TextLink(
+                                if (hasPin) "Change" else "Set PIN",
+                                onClick = { vm.startSetPin() },
+                            )
+                            if (hasPin) {
+                                TextLink("Remove", onClick = { vm.removePin() }, color = c.dng)
+                            }
+                        }
+                    }
+                }
+
+                // ---- Data ----
+                SectionLabel("Data")
+                SettingsCard {
+                    SettingsRow(
+                        icon = BentoIcons.Trash,
+                        title = "Start fresh",
+                        sub = "Erase all events, tasks and notes",
+                        last = true,
+                        danger = true,
+                    ) {
+                        TextLink(
+                            if (vm.isArmed(Arm.RESET)) "Sure?" else "Reset",
+                            onClick = { vm.resetApp() },
+                            color = c.dng,
+                        )
+                    }
+                }
+
+                // ---- Footer (.stfoot) ----
+                Text(
+                    "BENTO CALENDAR",
+                    fontSize = 9.5.sp,
+                    fontWeight = FontWeight.W700,
+                    letterSpacing = 0.14.em,
+                    color = c.faint,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 20.dp, bottom = 8.dp),
+                )
+            }
+        }
+    }
+}
+
+/** Grouped card (.stcard): tile bg, 1dp border, 18dp radius, 14dp/2dp padding. */
+@Composable
+private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
+    val c = LocalBento.current
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(bottom = 2.dp)
+            .background(c.tile, RoundedCornerShape(18.dp))
+            .border(1.dp, c.bd, RoundedCornerShape(18.dp))
+            .padding(horizontal = 14.dp, vertical = 2.dp),
+        content = content,
+    )
+}
+
+/**
+ * Settings row (.strow): 32dp tinted icon square, title 13.5/600 + sub 11
+ * (ellipsized), control at the right; hairline below unless [last].
+ */
+@Composable
+private fun SettingsRow(
+    icon: ImageVector,
+    title: String,
+    sub: String,
+    last: Boolean = false,
+    danger: Boolean = false,
+    control: @Composable () -> Unit,
+) {
+    val c = LocalBento.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .then(if (last) Modifier else Modifier.hairlineBottom(c.line))
+            .padding(vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(
+            Modifier
+                .size(32.dp)
+                .background(
+                    if (danger) c.dng.copy(alpha = 0.12f) else c.accTint(0.12f),
+                    RoundedCornerShape(10.dp),
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, null, tint = if (danger) c.dng else c.acc, modifier = Modifier.size(15.dp))
+        }
+        Column(Modifier.weight(1f)) {
+            Text(
+                title,
+                fontSize = 13.5.sp,
+                fontWeight = FontWeight.W600,
+                color = c.tx,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                sub,
+                fontSize = 11.sp,
+                color = c.sub,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+        control()
+    }
+}
+
+/** Theme chip (.cpill / .pon): active = accent border + 12% accent tint. */
+@Composable
+private fun ThemePill(label: String, active: Boolean, onClick: () -> Unit) {
+    val c = LocalBento.current
+    Box(
+        Modifier
+            .pressable(onClick = onClick)
+            .background(if (active) c.accTint(0.12f) else c.inp, CircleShape)
+            .border(1.dp, if (active) c.acc else c.bd, CircleShape)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        Text(
+            label,
+            fontSize = 11.5.sp,
+            fontWeight = FontWeight.W600,
+            color = if (active) c.tx else c.sub,
+        )
+    }
+}
+
+/**
+ * 25dp accent swatch (.swt); selected (.swon) draws the double ring outside
+ * its bounds — 2dp tile ring then 2dp text-color ring — like the prototype's
+ * box-shadow, so layout never shifts.
+ */
+@Composable
+private fun AccentSwatch(hex: String, selected: Boolean, onClick: () -> Unit) {
+    val c = LocalBento.current
+    Box(
+        Modifier
+            .size(25.dp)
+            .pressable(onClick = onClick)
+            .drawBehind {
+                if (selected) {
+                    val r = size.minDimension / 2f
+                    drawCircle(c.tile, radius = r + 1.dp.toPx(), style = Stroke(2.dp.toPx()))
+                    drawCircle(c.tx, radius = r + 3.dp.toPx(), style = Stroke(2.dp.toPx()))
+                }
+            }
+            .background(hexColor(hex), CircleShape),
+    )
+}
