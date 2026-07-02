@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -13,16 +15,30 @@ android {
         applicationId = "com.bento.calendar"
         minSdk = 27
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 3
+        versionName = "1.1.0"
     }
 
     signingConfigs {
         create("release") {
-            storeFile = rootProject.file("bento-release.keystore")
-            storePassword = "REDACTED"
-            keyAlias = "bento"
-            keyPassword = "REDACTED"
+            // Local builds: untracked keystore.properties next to the repo root.
+            // CI: KEYSTORE_* environment variables fed from GitHub secrets.
+            val propsFile = rootProject.file("keystore.properties")
+            if (propsFile.exists()) {
+                val props = Properties().apply { propsFile.inputStream().use { load(it) } }
+                storeFile = rootProject.file(props.getProperty("storeFile"))
+                storePassword = props.getProperty("storePassword")
+                keyAlias = props.getProperty("keyAlias")
+                keyPassword = props.getProperty("keyPassword")
+            } else {
+                val ksPath = System.getenv("KEYSTORE_PATH")
+                if (ksPath != null) {
+                    storeFile = File(ksPath)
+                    storePassword = System.getenv("KEYSTORE_PASSWORD")
+                    keyAlias = System.getenv("KEY_ALIAS")
+                    keyPassword = System.getenv("KEY_PASSWORD")
+                }
+            }
         }
     }
 
@@ -49,6 +65,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 

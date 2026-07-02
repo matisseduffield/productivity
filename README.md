@@ -22,10 +22,19 @@ $env:JAVA_HOME = "C:\Users\matisse\android-toolchain\jdk"
 & "C:\Users\matisse\android-toolchain\gradle\bin\gradle.bat" :app:assembleRelease :app:testReleaseUnitTest :app:lintRelease
 ```
 
-Output: `app\build\outputs\apk\release\app-release.apk` — signed with
-`bento-release.keystore` (alias `bento`, password in `app/build.gradle.kts`).
-**Keep the keystore**: future updates must be signed with it to install over
-the existing app.
+Output: `app\build\outputs\apk\release\app-release.apk`.
+
+Signing is never committed: local builds read the untracked
+`keystore.properties` + `bento-release.keystore` (backup at
+`C:\Users\matisse\android-toolchain\bento-release.keystore.backup`); CI
+restores them from the repo's encrypted Actions secrets (`KEYSTORE_BASE64`,
+`KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`). **Keep the keystore**:
+future updates must be signed with it to install over the existing app.
+
+## Updates
+The app updates itself: it checks this repo's latest GitHub release on launch,
+and offers download + install in-app (Settings → App updates, or the Today
+banner). Publishing an update = bump versionCode/versionName, push a `v*` tag.
 
 - `applicationId` com.bento.calendar · minSdk 27 · target/compile SDK 35
 - versionCode/versionName in `app/build.gradle.kts` — bump both for updates

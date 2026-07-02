@@ -24,6 +24,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent { AppRoot(vm) }
         requestNotificationPermission()
+        vm.checkForUpdates()
     }
 
     override fun onResume() {

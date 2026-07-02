@@ -269,6 +269,14 @@ object BentoIcons {
             strokePath("M12 13.5V10M9.5 3h5", sw)
         }
     }
+
+    /** Down arrow into a tray — app-update banner and settings row (new, drawn
+     *  in the prototype's stroke style; no source SVG exists for it). */
+    val Download: ImageVector by lazy {
+        icon("Download", 1.9f) { sw ->
+            strokePath("M12 4v11M7 10.5l5 5 5 -5M4.5 19.5h15", sw)
+        }
+    }
 }
 
 /** Builds a 24x24 dp / 24x24 viewport [ImageVector]; [sw] is passed to the block. */

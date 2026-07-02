@@ -16,11 +16,11 @@ import com.bento.calendar.data.Recur
 import com.bento.calendar.data.TaskItem
 import com.bento.calendar.data.minsToHm
 import com.bento.calendar.data.newId
-import com.bento.calendar.data.seedData
 import com.bento.calendar.data.toDate
 import com.bento.calendar.data.toIso
 import com.bento.calendar.data.toMins
 import com.bento.calendar.reminders.ReminderScheduler
+import com.bento.calendar.updates.UpdateManager
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -138,6 +138,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             ReminderScheduler.reschedule(getApplication(), d)
             lastScheduledEvents = d.events
         }
+        // NOTE: the automatic update check is kicked off from MainActivity, not
+        // here — the update state properties are declared below this init block
+        // and would not be initialized yet.
     }
 
     /** Events snapshot the alarm chain was last armed for (main-thread only). */
@@ -619,7 +622,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // ---- Data ----
     fun resetApp() {
         twoTap(Arm.RESET) {
-            mut { seedData() }
+            mut { AppData() }
             unlocked = emptySet()
             openNoteId = null
             doneOpen = false
@@ -644,5 +647,63 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // ---- Reminder banner ----
     fun dismissReminder(key: String) {
         dismissed = dismissed + key
+    }
+
+    // ---- App updates ----
+    var updateInfo by mutableStateOf<UpdateManager.UpdateInfo?>(null)
+        private set
+
+    /** null = not downloading, else 0..1. */
+    var updateProgress by mutableStateOf<Float?>(null)
+        private set
+    var updateDismissed by mutableStateOf(false)
+        private set
+    var updateChecking by mutableStateOf(false)
+        private set
+
+    /** True once a manual check finished and found nothing. */
+    var updateCheckDone by mutableStateOf(false)
+        private set
+
+    fun checkForUpdates(manual: Boolean = false) {
+        if (updateChecking) return
+        updateChecking = true
+        if (manual) updateCheckDone = false
+        viewModelScope.launch {
+            try {
+                val found = runCatching { UpdateManager.check() }.getOrNull()
+                if (found != null) {
+                    updateInfo = found
+                    updateDismissed = false
+                } else if (manual) {
+                    updateCheckDone = true
+                }
+            } finally {
+                updateChecking = false
+            }
+        }
+    }
+
+    fun downloadAndInstallUpdate() {
+        val info = updateInfo ?: return
+        if (updateProgress != null) return
+        updateProgress = 0f
+        viewModelScope.launch {
+            try {
+                val apk = UpdateManager.download(getApplication(), info) { p ->
+                    updateProgress = p
+                }
+                UpdateManager.install(getApplication(), apk)
+            } catch (_: Exception) {
+                // Network hiccup or cancelled confirm — stay on this version,
+                // the banner remains so the user can retry.
+            } finally {
+                updateProgress = null
+            }
+        }
+    }
+
+    fun dismissUpdate() {
+        updateDismissed = true
     }
 }

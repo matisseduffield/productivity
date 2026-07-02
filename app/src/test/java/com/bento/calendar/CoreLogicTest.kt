@@ -172,6 +172,27 @@ class DeriveTest {
     }
 }
 
+class UpdateVersionTest {
+    private fun newer(a: String, b: String) = com.bento.calendar.updates.UpdateManager.isNewer(a, b)
+
+    @Test
+    fun `semver comparison`() {
+        assertTrue(newer("1.0.2", "1.0.1"))
+        assertTrue(newer("1.1.0", "1.0.9"))
+        assertTrue(newer("1.10.0", "1.9.9"))
+        assertTrue(newer("2.0", "1.9.9"))
+        assertFalse(newer("1.0.1", "1.0.1"))
+        assertFalse(newer("1.0.0", "1.0.1"))
+        assertFalse(newer("0.9.9", "1.0.0"))
+    }
+
+    @Test
+    fun `handles junk segments gracefully`() {
+        assertTrue(newer("1.0.2-beta", "1.0.1"))
+        assertFalse(newer("abc", "1.0.0"))
+    }
+}
+
 class SchedulerLogicTest {
     @Test
     fun `next reminder picks earliest upcoming`() {

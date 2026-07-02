@@ -24,10 +24,19 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Restore signing keystore from secrets
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/bento-release.keystore"
+          echo "KEYSTORE_PATH=$RUNNER_TEMP/bento-release.keystore" >> "$GITHUB_ENV"
+
       - name: Run unit tests
         run: ./gradlew :app:testReleaseUnitTest
 
       - name: Build signed release APK
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew :app:assembleRelease
 
       - name: Name the APK

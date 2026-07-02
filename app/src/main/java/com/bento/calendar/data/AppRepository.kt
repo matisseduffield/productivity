@@ -19,7 +19,7 @@ private val json = Json {
 
 object AppDataSerializer : Serializer<AppData> {
     override val defaultValue: AppData
-        get() = seedData()
+        get() = AppData()
 
     override suspend fun readFrom(input: InputStream): AppData = try {
         json.decodeFromString(AppData.serializer(), input.readBytes().decodeToString())
@@ -35,7 +35,7 @@ object AppDataSerializer : Serializer<AppData> {
 private val Context.appDataStore: DataStore<AppData> by dataStore(
     fileName = "bento.calendar.v1.json",
     serializer = AppDataSerializer,
-    corruptionHandler = ReplaceFileCorruptionHandler { seedData() },
+    corruptionHandler = ReplaceFileCorruptionHandler { AppData() },
 )
 
 class AppRepository(context: Context) {

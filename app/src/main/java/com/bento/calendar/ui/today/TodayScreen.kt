@@ -124,14 +124,29 @@ fun TodayScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 .verticalScroll(rememberScrollState())
                 .padding(start = 18.dp, end = 18.dp, top = 2.dp, bottom = 14.dp),
         ) {
-            // Reminder banner (.notif)
+            // Reminder banner (.notif); an available app update borrows the
+            // same slot and styling when no reminder is showing.
             val banner = activeReminder(data.events, today, nowMin, vm.dismissed)
+            val update = vm.updateInfo
             if (banner != null) {
                 ReminderBannerCard(
                     title = banner.event.title,
                     sub = (if (banner.minsUntil <= 0) "Starting now" else "In ${banner.minsUntil} min") +
                         (if (banner.event.loc.isNotEmpty()) " · ${banner.event.loc}" else ""),
                     onDismiss = { vm.dismissReminder(banner.key) },
+                )
+            } else if (update != null && !vm.updateDismissed) {
+                val progress = vm.updateProgress
+                ReminderBannerCard(
+                    title = "Update ${update.versionName} available",
+                    sub = if (progress != null) {
+                        "Downloading… ${(progress * 100).toInt()}%"
+                    } else {
+                        "Tap to download and install"
+                    },
+                    onDismiss = { vm.dismissUpdate() },
+                    icon = BentoIcons.Download,
+                    onTap = { vm.downloadAndInstallUpdate() },
                 )
             }
 
@@ -202,7 +217,13 @@ private fun Eyebrow(text: String, color: Color, lockIcon: Boolean = false) {
 
 /** Accent-tinted reminder banner (.notif) above the grid; slides in from 16dp below + fade, 300ms. */
 @Composable
-private fun ReminderBannerCard(title: String, sub: String, onDismiss: () -> Unit) {
+private fun ReminderBannerCard(
+    title: String,
+    sub: String,
+    onDismiss: () -> Unit,
+    icon: androidx.compose.ui.graphics.vector.ImageVector = BentoIcons.Bell,
+    onTap: (() -> Unit)? = null,
+) {
     val c = LocalBento.current
     val enter = remember { Animatable(0f) }
     LaunchedEffect(Unit) { enter.animateTo(1f, tween(300)) }
@@ -214,13 +235,14 @@ private fun ReminderBannerCard(title: String, sub: String, onDismiss: () -> Unit
                 alpha = enter.value
                 translationY = (1f - enter.value) * 16.dp.toPx()
             }
+            .then(if (onTap != null) Modifier.tap(onClick = onTap) else Modifier)
             .background(c.accTint(0.14f).compositeOver(c.tile), RoundedCornerShape(16.dp))
             .border(1.dp, c.accTint(0.35f).compositeOver(c.bd), RoundedCornerShape(16.dp))
             .padding(horizontal = 13.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(11.dp),
     ) {
-        Icon(BentoIcons.Bell, null, tint = c.acc, modifier = Modifier.size(17.dp))
+        Icon(icon, null, tint = c.acc, modifier = Modifier.size(17.dp))
         Column(Modifier.weight(1f)) {
             Text(title, fontSize = 12.5.sp, fontWeight = FontWeight.W600, color = c.tx)
             Text(sub, fontSize = 11.sp, color = c.sub, modifier = Modifier.padding(top = 1.dp))

@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.bento.calendar.data.Accents
+import com.bento.calendar.BuildConfig
 import com.bento.calendar.data.AppData
 import com.bento.calendar.ui.AppViewModel
 import com.bento.calendar.ui.Arm
@@ -242,6 +243,34 @@ fun SettingsOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                             onClick = { vm.resetApp() },
                             color = c.dng,
                         )
+                    }
+                }
+
+                // ---- App ----
+                SectionLabel("App")
+                SettingsCard {
+                    val update = vm.updateInfo
+                    val progress = vm.updateProgress
+                    SettingsRow(
+                        icon = BentoIcons.Download,
+                        title = "App updates",
+                        sub = when {
+                            progress != null -> "Downloading… ${(progress * 100).toInt()}%"
+                            update != null -> "Version ${update.versionName} available"
+                            vm.updateChecking -> "Checking…"
+                            vm.updateCheckDone -> "You're on the latest version"
+                            else -> "Version ${BuildConfig.VERSION_NAME}"
+                        },
+                        last = true,
+                    ) {
+                        if (update != null) {
+                            TextLink(
+                                if (progress != null) "…" else "Update",
+                                onClick = { vm.downloadAndInstallUpdate() },
+                            )
+                        } else {
+                            TextLink("Check", onClick = { vm.checkForUpdates(manual = true) })
+                        }
                     }
                 }
             }
