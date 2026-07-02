@@ -21,6 +21,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
@@ -52,6 +56,13 @@ fun NoteEditorOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
     val note = data.notes.firstOrNull { it.id == vm.openNoteId } ?: return
     val c = LocalBento.current
 
+    // Local buffers are the source of truth while typing: the store is written
+    // through on every change (autosave, README line 92) but never fed back
+    // into the fields, so a slow DataStore round-trip can't drop keystrokes or
+    // reset the IME composing region. remember(note.id) reseeds on note switch.
+    var title by remember(note.id) { mutableStateOf(note.title) }
+    var body by remember(note.id) { mutableStateOf(note.body) }
+
     FullOverlay {
         Column(
             Modifier
@@ -82,7 +93,7 @@ fun NoteEditorOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                     }
                     NabButton(active = note.locked, onClick = vm::toggleNoteLock) {
                         Icon(
-                            BentoIcons.Lock,
+                            BentoIcons.LockLight,
                             null,
                             tint = if (note.locked) c.acc else c.sub,
                             modifier = Modifier.size(16.dp),
@@ -107,8 +118,11 @@ fun NoteEditorOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 color = c.tx,
             )
             BasicTextField(
-                value = note.title,
-                onValueChange = vm::setNoteTitle,
+                value = title,
+                onValueChange = { v ->
+                    title = v
+                    vm.setNoteTitle(v)
+                },
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(start = 22.dp, end = 22.dp, top = 8.dp),
@@ -117,7 +131,7 @@ fun NoteEditorOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 cursorBrush = SolidColor(c.acc),
                 decorationBox = { inner ->
                     Box {
-                        if (note.title.isEmpty()) {
+                        if (title.isEmpty()) {
                             Text("Title", style = titleStyle.copy(color = c.faint))
                         }
                         inner()
@@ -147,8 +161,11 @@ fun NoteEditorOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 color = c.tx,
             )
             BasicTextField(
-                value = note.body,
-                onValueChange = vm::setNoteBody,
+                value = body,
+                onValueChange = { v ->
+                    body = v
+                    vm.setNoteBody(v)
+                },
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
@@ -157,7 +174,7 @@ fun NoteEditorOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 cursorBrush = SolidColor(c.acc),
                 decorationBox = { inner ->
                     Box(Modifier.fillMaxSize()) {
-                        if (note.body.isEmpty()) {
+                        if (body.isEmpty()) {
                             Text("Start writing…", style = bodyStyle.copy(color = c.faint))
                         }
                         inner()

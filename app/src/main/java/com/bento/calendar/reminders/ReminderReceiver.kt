@@ -28,14 +28,24 @@ class ReminderReceiver : BroadcastReceiver() {
                 val now = LocalDateTime.now().truncatedTo(ChronoUnit.MINUTES)
                 val nm = context.getSystemService(NotificationManager::class.java)
 
-                // Fire everything due within a minute of now (alarm delivery jitter).
-                for (dayOffset in 0..1L) {
+                // Alarms can be delivered late (Doze, inexact fallback). Fire
+                // everything whose reminder time falls in (lastRun, now+1min]
+                // — covers arbitrary lateness without ever double-notifying.
+                val prefs = context.getSharedPreferences("reminders", Context.MODE_PRIVATE)
+                val windowEnd = now.plusMinutes(1)
+                val windowEndMin = toEpochMinutes(windowEnd)
+                // First-ever fire has no marker: bound the window to a few
+                // minutes so stale same-day reminders don't burst-notify.
+                val lastRun = prefs.getLong("lastRunMin", 0L)
+                    .let { if (it == 0L) windowEndMin - 3 else it }
+
+                for (dayOffset in -1..1L) {
                     val date = now.toLocalDate().plusDays(dayOffset)
                     for (e in occurrencesOn(data.events, date)) {
                         val remind = e.remind ?: continue
                         val fireAt = date.atTime(e.start.toTime()).minusMinutes(remind.toLong())
-                        val delta = ChronoUnit.MINUTES.between(fireAt, now)
-                        if (delta in -1..1) {
+                        val fireMin = toEpochMinutes(fireAt)
+                        if (fireMin in (lastRun + 1)..windowEndMin) {
                             nm.notify(
                                 (e.id + date).hashCode(),
                                 buildNotification(context, e.title, e.start, e.loc, remind, data.prefs.use24h),
@@ -43,12 +53,16 @@ class ReminderReceiver : BroadcastReceiver() {
                         }
                     }
                 }
+                prefs.edit().putLong("lastRunMin", windowEndMin).apply()
                 ReminderScheduler.reschedule(context, data)
             } finally {
                 pending.finish()
             }
         }
     }
+
+    private fun toEpochMinutes(t: LocalDateTime): Long =
+        t.atZone(java.time.ZoneId.systemDefault()).toEpochSecond() / 60
 
     private fun buildNotification(
         context: Context,

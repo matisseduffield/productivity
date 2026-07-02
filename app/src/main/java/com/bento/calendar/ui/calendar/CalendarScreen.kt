@@ -240,15 +240,13 @@ private fun NowLine(y: Dp) {
             .offset(y = y)
             .fillMaxWidth()
             .height(2.dp)
-            .background(c.acc),
-    ) {
-        Box(
-            Modifier
-                .offset(x = (-2).dp, y = (-3).dp)
-                .size(8.dp)
-                .background(c.acc, CircleShape),
-        )
-    }
+            .background(c.acc)
+            // 8dp dot straddling the line (prototype .nowln-d: left:-2px, top:-3px);
+            // drawn here because a child Box would be clamped to the 2dp height.
+            .drawBehind {
+                drawCircle(c.acc, radius = 4.dp.toPx(), center = Offset(2.dp.toPx(), 1.dp.toPx()))
+            },
+    )
 }
 
 // ---- Month view ----
@@ -334,7 +332,7 @@ private fun MonthCell(
             horizontalArrangement = Arrangement.spacedBy(3.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            cats.forEach { Dot(it.color, size = 5.dp) }
+            cats.forEach { Dot(it.color, size = 4.dp) }
         }
     }
 }

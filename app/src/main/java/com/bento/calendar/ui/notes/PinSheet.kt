@@ -78,6 +78,10 @@ fun PinSheet(vm: AppViewModel) {
                         7f at 320
                     },
                 )
+            } else {
+                // pinErr can flip false mid-shake (next digit press cancels the
+                // animateTo above); re-center so the dots don't stay offset.
+                shake.snapTo(0f)
             }
         }
         Row(

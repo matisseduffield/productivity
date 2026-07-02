@@ -6,9 +6,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -74,7 +77,7 @@ fun NotesScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                     Icon(BentoIcons.Search, null, tint = c.sub, modifier = Modifier.size(18.dp))
                 }
                 GBtn(onClick = vm::newNote, primary = true) {
-                    Icon(BentoIcons.Plus, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                    Icon(BentoIcons.PlusLight, null, tint = Color.White, modifier = Modifier.size(18.dp))
                 }
             }
         }
@@ -92,15 +95,20 @@ fun NotesScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 .padding(start = 18.dp, end = 18.dp, top = 2.dp, bottom = 14.dp),
         ) {
             if (pinned.isNotEmpty()) {
-                SectionLabel("Pinned")
+                PinnedLabel()
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     pinned.chunked(2).forEach { rowNotes ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        // height(IntrinsicSize.Max) + fillMaxHeight children =
+                        // the CSS grid's align-items:stretch (equal-height cards).
+                        Row(
+                            Modifier.height(IntrinsicSize.Max),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
                             rowNotes.forEach { n ->
                                 PinnedCard(
                                     note = n,
                                     onTap = { vm.openNote(n.id) },
-                                    modifier = Modifier.weight(1f),
+                                    modifier = Modifier.weight(1f).fillMaxHeight(),
                                 )
                             }
                             if (rowNotes.size == 1) Spacer(Modifier.weight(1f))
@@ -128,6 +136,26 @@ fun NotesScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
     }
 }
 
+/**
+ * "Pinned" section label: same typography as the shared SectionLabel but with
+ * the prototype's inline `margin-top:14px` override (markup line 205; the
+ * generic .slab default is 18px, which SectionLabel bakes in).
+ */
+@Composable
+private fun PinnedLabel() {
+    val c = LocalBento.current
+    Text(
+        "Pinned".uppercase(),
+        fontSize = 10.5.sp,
+        fontWeight = FontWeight.W700,
+        letterSpacing = 0.12.em,
+        color = c.sub,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 2.dp, end = 2.dp, top = 14.dp, bottom = 8.dp),
+    )
+}
+
 /** Locked notes never leak content into previews. */
 private fun preview(n: NoteItem): String {
     if (n.locked) return "•••• •••• ••••"
@@ -145,11 +173,12 @@ private fun PinnedCard(note: NoteItem, onTap: () -> Unit, modifier: Modifier = M
     val c = LocalBento.current
     Column(
         modifier
-            .heightIn(min = 88.dp)
             .tap(onClick = onTap)
             .background(c.tile, RoundedCornerShape(16.dp))
             .border(1.dp, c.bd, RoundedCornerShape(16.dp))
-            .padding(13.dp),
+            .padding(13.dp)
+            // Inside the padding: the prototype's min-height:88px is content-box.
+            .heightIn(min = 88.dp),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -200,7 +229,7 @@ private fun NoteRow(note: NoteItem, stamp: String, onTap: () -> Unit) {
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                if (note.locked) BentoIcons.Lock else BentoIcons.Doc,
+                if (note.locked) BentoIcons.LockLight else BentoIcons.Doc,
                 null,
                 tint = c.sub,
                 modifier = Modifier.size(15.dp),

@@ -1,5 +1,7 @@
 package com.bento.calendar.ui.today
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -24,10 +26,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -195,14 +200,20 @@ private fun Eyebrow(text: String, color: Color, lockIcon: Boolean = false) {
     }
 }
 
-/** Accent-tinted reminder banner (.notif) above the grid. */
+/** Accent-tinted reminder banner (.notif) above the grid; slides in from 16dp below + fade, 300ms. */
 @Composable
 private fun ReminderBannerCard(title: String, sub: String, onDismiss: () -> Unit) {
     val c = LocalBento.current
+    val enter = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { enter.animateTo(1f, tween(300)) }
     Row(
         Modifier
             .fillMaxWidth()
             .padding(top = 12.dp)
+            .graphicsLayer {
+                alpha = enter.value
+                translationY = (1f - enter.value) * 16.dp.toPx()
+            }
             .background(c.accTint(0.14f).compositeOver(c.tile), RoundedCornerShape(16.dp))
             .border(1.dp, c.accTint(0.35f).compositeOver(c.bd), RoundedCornerShape(16.dp))
             .padding(horizontal = 13.dp, vertical = 11.dp),

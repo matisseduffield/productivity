@@ -12,8 +12,10 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -100,9 +102,14 @@ fun Modifier.tap(enabled: Boolean = true, onClick: () -> Unit): Modifier = compo
     )
 }
 
-/** 1px hairline under list rows. */
+/** 1dp hairline under list rows (prototype px == dp). */
 fun Modifier.hairlineBottom(color: Color): Modifier = drawBehind {
-    drawRect(color = color, topLeft = androidx.compose.ui.geometry.Offset(0f, size.height - 1f))
+    val h = 1.dp.toPx()
+    drawRect(
+        color = color,
+        topLeft = androidx.compose.ui.geometry.Offset(0f, size.height - h),
+        size = androidx.compose.ui.geometry.Size(size.width, h),
+    )
 }
 
 /** 38dp circular header button (.gbtn); primary = the fixed-blue create button. */
@@ -348,7 +355,8 @@ fun BentoSheet(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Uni
     val c = LocalBento.current
     val enter = remember { Animatable(0f) }
     LaunchedEffect(Unit) { enter.animateTo(1f, tween(320, easing = SheetEasing)) }
-    Box(Modifier.fillMaxSize()) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val sheetMax = maxHeight * 0.86f
         Box(
             Modifier
                 .fillMaxSize()
@@ -364,7 +372,9 @@ fun BentoSheet(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Uni
                     translationY = (1f - enter.value) * 70.dp.toPx()
                 }
                 .fillMaxWidth()
-                .fillMaxHeight(0.86f)
+                // Prototype .sheet is max-height:86% — sheets hug their content
+                // (the PIN pad is short) and only long editors hit the cap.
+                .heightIn(max = sheetMax)
                 .clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
                 .background(c.bg)
                 .tap {} // consume taps so they don't hit the scrim

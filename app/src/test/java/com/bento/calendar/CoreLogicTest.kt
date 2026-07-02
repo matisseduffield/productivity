@@ -194,4 +194,21 @@ class SchedulerLogicTest {
             ),
         )
     }
+
+    @Test
+    fun `day-before reminder of tomorrow's event beats today's later reminder`() {
+        val data = com.bento.calendar.data.AppData(
+            events = listOf(
+                EventItem(id = "a", title = "a", date = "2026-07-02", start = "23:00", end = "23:30", remind = 10),
+                EventItem(id = "b", title = "b", date = "2026-07-03", start = "09:00", end = "10:00", remind = 1440),
+            ),
+        )
+        // b's "1 day before" fires today 09:00, well before a's 22:50
+        assertEquals(
+            LocalDateTime.parse("2026-07-02T09:00:00"),
+            com.bento.calendar.reminders.ReminderScheduler.nextReminderTime(
+                data, LocalDateTime.parse("2026-07-02T08:00:00"),
+            ),
+        )
+    }
 }

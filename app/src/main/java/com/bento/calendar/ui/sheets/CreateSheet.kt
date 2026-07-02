@@ -20,13 +20,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bento.calendar.ui.AppViewModel
 import com.bento.calendar.ui.components.BentoSheet
-import com.bento.calendar.ui.components.pressable
+import com.bento.calendar.ui.components.tap
 import com.bento.calendar.ui.theme.BentoIcons
 import com.bento.calendar.ui.theme.LocalBento
 
 /**
  * Create menu bottom sheet (prototype `fabOpen` sheet, markup lines 252-256):
- * "Create" title + three pressable rows — New event / New task / New note.
+ * "Create" title + three tappable rows — New event / New task / New note.
  */
 @Composable
 fun CreateSheet(vm: AppViewModel) {
@@ -52,7 +52,7 @@ private fun CreateRow(icon: ImageVector, label: String, onClick: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
-            .pressable(onClick = onClick)
+            .tap(onClick = onClick)
             .padding(horizontal = 2.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),

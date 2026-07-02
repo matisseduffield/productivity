@@ -44,6 +44,19 @@ object BentoIcons {
         }
     }
 
+    /** [TabCalendar] glyph at sw 1.9 — settings 'Week starts Monday' row (~235). */
+    val SettingsCalendar: ImageVector by lazy {
+        icon("SettingsCalendar", 1.9f) { sw ->
+            // <rect x="3.5" y="5" width="17" height="15.5" rx="3.5">
+            strokePath(
+                "M7 5h10a3.5 3.5 0 0 1 3.5 3.5v8.5a3.5 3.5 0 0 1 -3.5 3.5" +
+                    "H7a3.5 3.5 0 0 1 -3.5 -3.5v-8.5a3.5 3.5 0 0 1 3.5 -3.5z",
+                sw,
+            )
+            strokePath("M3.5 9.8h17M8.2 3v3.6M15.8 3v3.6", sw)
+        }
+    }
+
     /** Document with folded corner — Notes tab (~221, sw 1.8). */
     val TabNotes: ImageVector by lazy {
         icon("TabNotes", 1.8f) { sw ->
@@ -63,9 +76,27 @@ object BentoIcons {
         }
     }
 
+    /** [TabTasks] glyph at sw 1.9 — settings 'Clear completed' row (~241). */
+    val SettingsChecklist: ImageVector by lazy {
+        icon("SettingsChecklist", 1.9f) { sw ->
+            strokePath(
+                "M4 6.2l1.7 1.7L8.6 5M12 6.5h8" +
+                    "M4 12.7l1.7 1.7 2.9 -2.9M12 13h8M12 19.5h8M4.2 19.5h3.4",
+                sw,
+            )
+        }
+    }
+
     /** Plus — create buttons and FAB (~173, sw 2.2). */
     val Plus: ImageVector by lazy {
         icon("Plus", 2.2f) { sw ->
+            strokePath("M12 5.5v13M5.5 12h13", sw)
+        }
+    }
+
+    /** [Plus] at sw 2.0 — Notes (~203) and Tasks (~211) header create buttons. */
+    val PlusLight: ImageVector by lazy {
+        icon("PlusLight", 2.0f) { sw ->
             strokePath("M12 5.5v13M5.5 12h13", sw)
         }
     }
@@ -82,11 +113,12 @@ object BentoIcons {
     /**
      * Settings glyph: three lines with offset knob circles (~173, sw 1.8).
      * The source fills the knobs with var(--tile) to knock out the lines;
-     * a single-tint ImageVector can't do that, so the knobs are stroke-only.
+     * with a single tint we reproduce the knockout by segmenting each rail at
+     * the knob's fill edge (r 2.4) so the gap under the ring reads identically.
      */
     val Sliders: ImageVector by lazy {
         icon("Sliders", 1.8f) { sw ->
-            strokePath("M4.5 7.2h15M4.5 12h15M4.5 16.8h15", sw)
+            strokePath("M4.5 7.2H7M11.8 7.2H19.5M4.5 12H12.6M17.4 12H19.5M4.5 16.8H5.6M10.4 16.8H19.5", sw)
             // <circle cx="9.4" cy="7.2" r="2.4">, <circle cx="15" cy="12" r="2.4">,
             // <circle cx="8" cy="16.8" r="2.4">
             strokePath(
@@ -149,6 +181,19 @@ object BentoIcons {
     /** Padlock — locked notes (~179, sw 2.2). */
     val Lock: ImageVector by lazy {
         icon("Lock", 2.2f) { sw ->
+            // <rect x="5" y="10.5" width="14" height="9.5" rx="3">
+            strokePath(
+                "M8 10.5h8a3 3 0 0 1 3 3v3.5a3 3 0 0 1 -3 3" +
+                    "H8a3 3 0 0 1 -3 -3v-3.5a3 3 0 0 1 3 -3z",
+                sw,
+            )
+            strokePath("M8.3 10.5V7.8a3.7 3.7 0 0 1 7.4 0v2.7", sw)
+        }
+    }
+
+    /** [Lock] at sw 2.0 — note rows (~207), note editor (~225), settings PIN row (~245). */
+    val LockLight: ImageVector by lazy {
+        icon("LockLight", 2.0f) { sw ->
             // <rect x="5" y="10.5" width="14" height="9.5" rx="3">
             strokePath(
                 "M8 10.5h8a3 3 0 0 1 3 3v3.5a3 3 0 0 1 -3 3" +

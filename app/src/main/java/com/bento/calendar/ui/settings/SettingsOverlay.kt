@@ -26,7 +26,6 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
@@ -94,7 +93,7 @@ fun SettingsOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                     .padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 20.dp),
             ) {
                 // ---- Appearance ----
-                SectionLabel("Appearance")
+                FirstSectionLabel("Appearance")
                 SettingsCard {
                     SettingsRow(
                         icon = BentoIcons.Moon,
@@ -137,7 +136,7 @@ fun SettingsOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                         BentoSwitch(on = prefs.use24h, onToggle = { vm.toggle24h() })
                     }
                     SettingsRow(
-                        icon = BentoIcons.TabCalendar,
+                        icon = BentoIcons.SettingsCalendar,
                         title = "Week starts Monday",
                         sub = "All calendar views",
                     ) {
@@ -187,7 +186,7 @@ fun SettingsOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 SectionLabel("Tasks")
                 SettingsCard {
                     SettingsRow(
-                        icon = BentoIcons.TabTasks,
+                        icon = BentoIcons.SettingsChecklist,
                         title = "Clear completed",
                         sub = if (doneCount > 0) {
                             "$doneCount completed task" + (if (doneCount > 1) "s" else "")
@@ -208,7 +207,7 @@ fun SettingsOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 SectionLabel("Notes & privacy")
                 SettingsCard {
                     SettingsRow(
-                        icon = BentoIcons.Lock,
+                        icon = BentoIcons.LockLight,
                         title = "Notes PIN",
                         sub = if (hasPin) "PIN is set" else "No PIN yet",
                         last = true,
@@ -245,22 +244,30 @@ fun SettingsOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                         )
                     }
                 }
-
-                // ---- Footer (.stfoot) ----
-                Text(
-                    "BENTO CALENDAR",
-                    fontSize = 9.5.sp,
-                    fontWeight = FontWeight.W700,
-                    letterSpacing = 0.14.em,
-                    color = c.faint,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 20.dp, bottom = 8.dp),
-                )
             }
         }
     }
+}
+
+/**
+ * First section label: prototype markup line 227 overrides the default .slab
+ * top margin with an inline `margin-top:10px`, so this mirrors the shared
+ * SectionLabel styling (10.5sp/W700/0.12em/sub, 2dp sides, 8dp bottom) with a
+ * 10dp top padding instead of the component's 18dp default.
+ */
+@Composable
+private fun FirstSectionLabel(text: String) {
+    val c = LocalBento.current
+    Text(
+        text.uppercase(),
+        fontSize = 10.5.sp,
+        fontWeight = FontWeight.W700,
+        letterSpacing = 0.12.em,
+        color = c.sub,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 2.dp, end = 2.dp, top = 10.dp, bottom = 8.dp),
+    )
 }
 
 /** Grouped card (.stcard): tile bg, 1dp border, 18dp radius, 14dp/2dp padding. */

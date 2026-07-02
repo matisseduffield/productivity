@@ -9,11 +9,23 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
-/** Re-arms the reminder alarm after reboot or app update. */
+/**
+ * Re-arms the reminder alarm after reboot, app update, clock/timezone change,
+ * or the user toggling the exact-alarm permission (API 31/32 kills pending
+ * exact alarms when it changes).
+ */
 class BootReceiver : BroadcastReceiver() {
+    private val actions = setOf(
+        Intent.ACTION_BOOT_COMPLETED,
+        Intent.ACTION_MY_PACKAGE_REPLACED,
+        Intent.ACTION_TIME_CHANGED,
+        Intent.ACTION_TIMEZONE_CHANGED,
+        "android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED",
+    )
+
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action ?: return
-        if (action != Intent.ACTION_BOOT_COMPLETED && action != Intent.ACTION_MY_PACKAGE_REPLACED) return
+        if (action !in actions) return
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {

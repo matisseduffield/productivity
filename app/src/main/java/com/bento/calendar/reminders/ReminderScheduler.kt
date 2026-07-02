@@ -60,8 +60,10 @@ object ReminderScheduler {
                     best = fireAt
                 }
             }
-            // Occurrences are per-day; once we have a hit, later days can't beat it.
-            if (best != null && best.toLocalDate() <= date) return best
+            // A reminder fires at most 1 day (1440 min) before its occurrence,
+            // so a later occurrence day can still fire earlier today — only
+            // stop once the best fire time is strictly before this day.
+            if (best != null && best.toLocalDate().isBefore(date)) return best
         }
         return best
     }

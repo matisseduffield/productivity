@@ -84,7 +84,7 @@ fun TasksScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                     Icon(BentoIcons.Search, null, tint = c.sub, modifier = Modifier.size(18.dp))
                 }
                 GBtn(onClick = { vm.newTask() }, primary = true) {
-                    Icon(BentoIcons.Plus, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                    Icon(BentoIcons.PlusLight, null, tint = Color.White, modifier = Modifier.size(18.dp))
                 }
             }
         }

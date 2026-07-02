@@ -12,8 +12,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -135,7 +137,9 @@ fun SearchOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
         focusRequester.requestFocus()
     }
 
-    BoxWithConstraints(Modifier.fillMaxSize()) {
+    // imePadding shrinks maxHeight (and thus panelMax) to the space above the
+    // keyboard, so the autofocused IME can never occlude the dropdown.
+    BoxWithConstraints(Modifier.fillMaxSize().imePadding()) {
         val panelMax = maxHeight * 0.62f
 
         // Scrim (.scatch) — tap to close.
@@ -147,10 +151,12 @@ fun SearchOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 .tap { vm.closeSearch() },
         )
 
-        // Floating search bar (.sbar).
+        // Floating search bar (.sbar). The real status bar replaces the
+        // prototype's 36px fake one, leaving the 8px gap below it.
         Row(
             Modifier
-                .padding(top = 44.dp, start = 12.dp, end = 12.dp)
+                .statusBarsPadding()
+                .padding(top = 8.dp, start = 12.dp, end = 12.dp)
                 .fillMaxWidth()
                 .graphicsLayer { alpha = fade.value }
                 .tap {}, // don't let gaps fall through to the scrim
@@ -186,7 +192,8 @@ fun SearchOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
         val shape = RoundedCornerShape(18.dp)
         Column(
             Modifier
-                .padding(top = 97.dp, start = 12.dp, end = 12.dp)
+                .statusBarsPadding()
+                .padding(top = 61.dp, start = 12.dp, end = 12.dp)
                 .fillMaxWidth()
                 .heightIn(max = panelMax)
                 .graphicsLayer {
@@ -235,7 +242,7 @@ private fun ResultRow(row: SearchRow) {
         Box(
             Modifier
                 .size(37.dp)
-                .background(c.inp, RoundedCornerShape(12.dp))
+                .background(c.tile, RoundedCornerShape(12.dp))
                 .border(1.dp, c.bd, RoundedCornerShape(12.dp)),
             contentAlignment = Alignment.Center,
         ) {

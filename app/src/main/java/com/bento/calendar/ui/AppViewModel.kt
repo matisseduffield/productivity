@@ -134,9 +134,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         viewModelScope.launch {
-            ReminderScheduler.reschedule(getApplication(), repo.data.first())
+            val d = repo.data.first()
+            ReminderScheduler.reschedule(getApplication(), d)
+            lastScheduledEvents = d.events
         }
     }
+
+    /** Events snapshot the alarm chain was last armed for (main-thread only). */
+    private var lastScheduledEvents: List<EventItem>? = null
 
     fun refreshNow() {
         _now.value = LocalDateTime.now()
@@ -149,7 +154,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun mut(transform: (AppData) -> AppData) {
         viewModelScope.launch {
             val d = repo.update(transform)
-            ReminderScheduler.reschedule(getApplication(), d)
+            // Alarms only depend on events; note/task/pref edits (e.g. every
+            // editor keystroke) must not trigger a 60-day alarm rescan.
+            if (d.events != lastScheduledEvents) {
+                ReminderScheduler.reschedule(getApplication(), d)
+                lastScheduledEvents = d.events
+            }
         }
     }
 
@@ -449,15 +459,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private var creatingNote = false
+
     fun newNote() {
+        if (creatingNote) return
+        creatingNote = true
         val id = newId()
-        mut { x ->
-            x.copy(notes = x.notes + NoteItem(id = id, updated = System.currentTimeMillis()))
+        viewModelScope.launch {
+            try {
+                repo.update { x ->
+                    x.copy(notes = x.notes + NoteItem(id = id, updated = System.currentTimeMillis()))
+                }
+                // Open only once the note exists in the store, otherwise the
+                // editor overlay finds nothing and silently closes.
+                openNoteId = id
+                tabState = Tab.Notes
+                fabOpen = false
+                disarm(Arm.NOTE)
+            } finally {
+                creatingNote = false
+            }
         }
-        openNoteId = id
-        tabState = Tab.Notes
-        fabOpen = false
-        disarm(Arm.NOTE)
     }
 
     fun setNoteTitle(v: String) = editNote { it.copy(title = v) }
