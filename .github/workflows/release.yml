@@ -25,9 +25,14 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Restore signing keystore from secrets
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/bento-release.keystore"
+          printf '%s' "$KEYSTORE_BASE64" | tr -d '\r\n' | base64 -d > "$RUNNER_TEMP/bento-release.keystore"
           echo "KEYSTORE_PATH=$RUNNER_TEMP/bento-release.keystore" >> "$GITHUB_ENV"
+          # Fail early with a clear message if the keystore didn't materialize.
+          keytool -list -keystore "$RUNNER_TEMP/bento-release.keystore" \
+            -storepass "${{ secrets.KEYSTORE_PASSWORD }}" >/dev/null
 
       - name: Derive version from tag
         run: |
