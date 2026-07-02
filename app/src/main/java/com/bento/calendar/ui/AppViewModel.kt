@@ -622,7 +622,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // ---- Data ----
     fun resetApp() {
         twoTap(Arm.RESET) {
-            mut { AppData() }
+            // "Erase all events, tasks and notes" — keep theme, prefs and PIN,
+            // which the label doesn't claim to touch.
+            mut { it.copy(events = emptyList(), tasks = emptyList(), notes = emptyList()) }
             unlocked = emptySet()
             openNoteId = null
             doneOpen = false
@@ -653,52 +655,92 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var updateInfo by mutableStateOf<UpdateManager.UpdateInfo?>(null)
         private set
 
-    /** null = not downloading, else 0..1. */
-    var updateProgress by mutableStateOf<Float?>(null)
+    enum class UpdatePhase { Idle, Downloading, AwaitingConfirm }
+
+    /** Download/install lifecycle beyond "an update exists". */
+    var updatePhase by mutableStateOf(UpdatePhase.Idle)
+        private set
+
+    /** 0..1 while [UpdatePhase.Downloading]. */
+    var updateProgress by mutableStateOf(0f)
         private set
     var updateDismissed by mutableStateOf(false)
         private set
     var updateChecking by mutableStateOf(false)
         private set
 
-    /** True once a manual check finished and found nothing. */
-    var updateCheckDone by mutableStateOf(false)
+    /** True once a manual check finished and found the app up to date. */
+    var updateUpToDate by mutableStateOf(false)
         private set
 
+    /** Last check/install error message, or null. Shown in the App settings row. */
+    var updateError by mutableStateOf<String?>(null)
+        private set
+
+    /** Guards the automatic launch check so a dismissed banner stays dismissed
+     *  across activity recreation (rotation, theme change). */
+    private var autoCheckDone = false
+
+    init {
+        viewModelScope.launch {
+            UpdateManager.installError.collect { msg ->
+                if (msg != null) {
+                    updateError = msg
+                    updatePhase = UpdatePhase.Idle
+                }
+            }
+        }
+    }
+
     fun checkForUpdates(manual: Boolean = false) {
+        if (!manual && autoCheckDone) return
         if (updateChecking) return
         updateChecking = true
-        if (manual) updateCheckDone = false
+        if (manual) {
+            updateUpToDate = false
+            updateError = null
+        }
         viewModelScope.launch {
             try {
-                val found = runCatching { UpdateManager.check() }.getOrNull()
-                if (found != null) {
-                    updateInfo = found
-                    updateDismissed = false
-                } else if (manual) {
-                    updateCheckDone = true
+                when (val result = UpdateManager.check()) {
+                    is UpdateManager.CheckResult.Available -> {
+                        updateInfo = result.info
+                        if (manual) updateDismissed = false
+                    }
+                    is UpdateManager.CheckResult.UpToDate -> {
+                        updateInfo = null
+                        if (manual) updateUpToDate = true
+                    }
+                    is UpdateManager.CheckResult.Failed -> {
+                        if (manual) updateError = result.message
+                    }
                 }
             } finally {
                 updateChecking = false
+                if (!manual) autoCheckDone = true
             }
         }
     }
 
     fun downloadAndInstallUpdate() {
         val info = updateInfo ?: return
-        if (updateProgress != null) return
+        if (updatePhase != UpdatePhase.Idle) return
+        updateError = null
         updateProgress = 0f
+        updatePhase = UpdatePhase.Downloading
         viewModelScope.launch {
             try {
                 val apk = UpdateManager.download(getApplication(), info) { p ->
                     updateProgress = p
                 }
+                // Session committed; the system confirm dialog / notification
+                // takes over from here. Stay in AwaitingConfirm so the banner
+                // doesn't invite a duplicate download.
+                updatePhase = UpdatePhase.AwaitingConfirm
                 UpdateManager.install(getApplication(), apk)
-            } catch (_: Exception) {
-                // Network hiccup or cancelled confirm — stay on this version,
-                // the banner remains so the user can retry.
-            } finally {
-                updateProgress = null
+            } catch (e: Exception) {
+                updateError = e.message ?: "Update failed"
+                updatePhase = UpdatePhase.Idle
             }
         }
     }

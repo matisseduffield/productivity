@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageInstaller
 import com.bento.calendar.BuildConfig
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
@@ -33,6 +34,20 @@ object UpdateManager {
         val sizeBytes: Long,
     )
 
+    /** Outcome of a check — distinguishes "up to date" from "couldn't check". */
+    sealed interface CheckResult {
+        data class Available(val info: UpdateInfo) : CheckResult
+        data object UpToDate : CheckResult
+        data class Failed(val message: String) : CheckResult
+    }
+
+    /**
+     * Terminal install-failure message from [UpdateInstallReceiver], surfaced
+     * to the UI. Process-static so the manifest receiver can publish without a
+     * ViewModel reference.
+     */
+    val installError = MutableStateFlow<String?>(null)
+
     /** Piecewise numeric compare of dotted versions: "1.10.0" > "1.9.9". */
     fun isNewer(remote: String, installed: String): Boolean {
         val r = remote.split(".").map { it.filter(Char::isDigit).toIntOrNull() ?: 0 }
@@ -45,30 +60,36 @@ object UpdateManager {
         return false
     }
 
-    /** Latest release if it is newer than the installed build, else null. */
-    suspend fun check(): UpdateInfo? = withContext(Dispatchers.IO) {
+    suspend fun check(): CheckResult = withContext(Dispatchers.IO) {
         val conn = (URL(LATEST_API).openConnection() as HttpURLConnection).apply {
             connectTimeout = 10_000
             readTimeout = 15_000
             setRequestProperty("Accept", "application/vnd.github+json")
         }
         try {
-            if (conn.responseCode != 200) return@withContext null
+            val code = conn.responseCode
+            if (code != 200) return@withContext CheckResult.Failed("Couldn't reach GitHub (HTTP $code)")
             val root = Json.parseToJsonElement(
                 conn.inputStream.bufferedReader().readText(),
             ).jsonObject
-            val tag = root["tag_name"]?.jsonPrimitive?.content ?: return@withContext null
+            val tag = root["tag_name"]?.jsonPrimitive?.content
+                ?: return@withContext CheckResult.Failed("No releases found")
             val remote = tag.removePrefix("v")
-            if (!isNewer(remote, BuildConfig.VERSION_NAME)) return@withContext null
+            if (!isNewer(remote, BuildConfig.VERSION_NAME)) return@withContext CheckResult.UpToDate
             val apk = root["assets"]?.jsonArray
                 ?.map { it.jsonObject }
                 ?.firstOrNull { it["name"]?.jsonPrimitive?.content?.endsWith(".apk") == true }
-                ?: return@withContext null
-            UpdateInfo(
-                versionName = remote,
-                apkUrl = apk["browser_download_url"]?.jsonPrimitive?.content ?: return@withContext null,
-                sizeBytes = apk["size"]?.jsonPrimitive?.long ?: -1L,
+                ?: return@withContext CheckResult.Failed("Release has no APK yet")
+            CheckResult.Available(
+                UpdateInfo(
+                    versionName = remote,
+                    apkUrl = apk["browser_download_url"]?.jsonPrimitive?.content
+                        ?: return@withContext CheckResult.Failed("Release asset missing URL"),
+                    sizeBytes = apk["size"]?.jsonPrimitive?.long ?: -1L,
+                ),
             )
+        } catch (e: Exception) {
+            CheckResult.Failed(e.message ?: "Update check failed")
         } finally {
             conn.disconnect()
         }
@@ -110,27 +131,46 @@ object UpdateManager {
         }
     }
 
-    /** Commits the APK through PackageInstaller; Android shows the confirm UI. */
-    fun install(context: Context, apk: File) {
+    /**
+     * Commits the APK through PackageInstaller on IO; Android shows the confirm
+     * UI and enforces the signature match. Abandons any stale sessions first and
+     * cleans up on failure so retries never accumulate orphaned sessions.
+     */
+    suspend fun install(context: Context, apk: File): Unit = withContext(Dispatchers.IO) {
         val installer = context.packageManager.packageInstaller
+
+        // Reject an APK that isn't actually this app before we ever prompt.
+        val pkgInfo = context.packageManager.getPackageArchiveInfo(apk.absolutePath, 0)
+        require(pkgInfo?.packageName == BuildConfig.APPLICATION_ID) {
+            "Downloaded APK is not ${BuildConfig.APPLICATION_ID}"
+        }
+
+        installer.mySessions.forEach { runCatching { installer.abandonSession(it.sessionId) } }
+
         val params = PackageInstaller.SessionParams(
             PackageInstaller.SessionParams.MODE_FULL_INSTALL,
         ).apply {
             setAppPackageName(BuildConfig.APPLICATION_ID)
         }
         val sessionId = installer.createSession(params)
-        installer.openSession(sessionId).use { session ->
-            apk.inputStream().use { input ->
-                session.openWrite("update.apk", 0, apk.length()).use { sink ->
-                    input.copyTo(sink)
-                    session.fsync(sink)
+        try {
+            installer.openSession(sessionId).use { session ->
+                apk.inputStream().use { input ->
+                    session.openWrite("update.apk", 0, apk.length()).use { sink ->
+                        input.copyTo(sink)
+                        session.fsync(sink)
+                    }
                 }
+                val statusIntent = Intent(context, UpdateInstallReceiver::class.java)
+                    .setAction(UpdateInstallReceiver.ACTION_INSTALL_STATUS)
+                    .setPackage(context.packageName)
+                val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+                val pending = PendingIntent.getBroadcast(context, sessionId, statusIntent, flags)
+                session.commit(pending.intentSender)
             }
-            val statusIntent = Intent(context, UpdateInstallReceiver::class.java)
-                .setAction(UpdateInstallReceiver.ACTION_INSTALL_STATUS)
-            val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
-            val pending = PendingIntent.getBroadcast(context, sessionId, statusIntent, flags)
-            session.commit(pending.intentSender)
+        } catch (e: Exception) {
+            runCatching { installer.abandonSession(sessionId) }
+            throw e
         }
     }
 }

@@ -250,26 +250,30 @@ fun SettingsOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 SectionLabel("App")
                 SettingsCard {
                     val update = vm.updateInfo
-                    val progress = vm.updateProgress
+                    val phase = vm.updatePhase
                     SettingsRow(
                         icon = BentoIcons.Download,
                         title = "App updates",
                         sub = when {
-                            progress != null -> "Downloading… ${(progress * 100).toInt()}%"
+                            phase == AppViewModel.UpdatePhase.Downloading ->
+                                "Downloading… ${(vm.updateProgress * 100).toInt()}%"
+                            phase == AppViewModel.UpdatePhase.AwaitingConfirm ->
+                                "Waiting for install confirmation…"
+                            vm.updateError != null -> vm.updateError!!
                             update != null -> "Version ${update.versionName} available"
                             vm.updateChecking -> "Checking…"
-                            vm.updateCheckDone -> "You're on the latest version"
+                            vm.updateUpToDate -> "You're on the latest version"
                             else -> "Version ${BuildConfig.VERSION_NAME}"
                         },
                         last = true,
                     ) {
-                        if (update != null) {
+                        if (update != null && phase == AppViewModel.UpdatePhase.Idle) {
+                            TextLink("Update", onClick = { vm.downloadAndInstallUpdate() })
+                        } else if (phase == AppViewModel.UpdatePhase.Idle) {
                             TextLink(
-                                if (progress != null) "…" else "Update",
-                                onClick = { vm.downloadAndInstallUpdate() },
+                                if (vm.updateChecking) "…" else "Check",
+                                onClick = { vm.checkForUpdates(manual = true) },
                             )
-                        } else {
-                            TextLink("Check", onClick = { vm.checkForUpdates(manual = true) })
                         }
                     }
                 }

@@ -136,17 +136,24 @@ fun TodayScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                     onDismiss = { vm.dismissReminder(banner.key) },
                 )
             } else if (update != null && !vm.updateDismissed) {
-                val progress = vm.updateProgress
+                val phase = vm.updatePhase
                 ReminderBannerCard(
                     title = "Update ${update.versionName} available",
-                    sub = if (progress != null) {
-                        "Downloading… ${(progress * 100).toInt()}%"
-                    } else {
-                        "Tap to download and install"
+                    sub = when (phase) {
+                        AppViewModel.UpdatePhase.Downloading ->
+                            "Downloading… ${(vm.updateProgress * 100).toInt()}%"
+                        AppViewModel.UpdatePhase.AwaitingConfirm ->
+                            "Waiting for install confirmation…"
+                        AppViewModel.UpdatePhase.Idle ->
+                            vm.updateError ?: "Tap to download and install"
                     },
                     onDismiss = { vm.dismissUpdate() },
                     icon = BentoIcons.Download,
-                    onTap = { vm.downloadAndInstallUpdate() },
+                    onTap = if (phase == AppViewModel.UpdatePhase.Idle) {
+                        { vm.downloadAndInstallUpdate() }
+                    } else {
+                        null
+                    },
                 )
             }
 
