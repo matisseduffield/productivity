@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Bento-grid mark: four rounded tiles, one tinted violet like the app accent. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group>
+        <path
+            android:fillColor="#8B6FE8"
+            android:pathData="M31,31 h21 a5,5 0 0 1 5,5 v9 a5,5 0 0 1 -5,5 h-21 a5,5 0 0 1 -5,-5 v-9 a5,5 0 0 1 5,-5 z" />
+        <path
+            android:fillColor="#EDEEF4"
+            android:pathData="M62,31 h15 a5,5 0 0 1 5,5 v9 a5,5 0 0 1 -5,5 h-15 a5,5 0 0 1 -5,-5 v-9 a5,5 0 0 1 5,-5 z" />
+        <path
+            android:fillColor="#EDEEF4"
+            android:pathData="M31,55 h15 a5,5 0 0 1 5,5 v17 a5,5 0 0 1 -5,5 h-15 a5,5 0 0 1 -5,-5 v-17 a5,5 0 0 1 5,-5 z" />
+        <path
+            android:fillColor="#EDEEF4"
+            android:pathData="M62,55 h15 a5,5 0 0 1 5,5 v17 a5,5 0 0 1 -5,5 h-15 a5,5 0 0 1 -5,-5 v-17 a5,5 0 0 1 5,-5 z" />
+    </group>
+</vector>
