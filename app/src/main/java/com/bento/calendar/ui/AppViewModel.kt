@@ -272,6 +272,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         selDate = date
     }
 
+    /** Header-title date picker: jump straight to a date in the current view. */
+    fun jumpToDate(date: LocalDate) {
+        selDate = date
+        cursor = YearMonth.from(date)
+    }
+
     /** Today-tab week strip: jump to Day view of that date. */
     fun weekStripTap(date: LocalDate) {
         tabState = Tab.Calendar

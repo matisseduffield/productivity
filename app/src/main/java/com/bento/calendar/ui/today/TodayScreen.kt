@@ -85,7 +85,8 @@ fun TodayScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
             verticalAlignment = Alignment.Top,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Column(Modifier.weight(1f)) {
+            // Tapping the date jumps to today's day view in the calendar.
+            Column(Modifier.weight(1f).tap { vm.weekStripTap(today) }) {
                 Text(
                     Fmt.greeting(now.hour),
                     fontSize = 12.sp,

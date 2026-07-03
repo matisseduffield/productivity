@@ -2,6 +2,7 @@ package com.bento.calendar.ui.calendar
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,10 +24,18 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -76,6 +85,22 @@ fun CalendarScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
         Column(
             Modifier
                 .weight(1f)
+                // Swipe horizontally anywhere in the calendar body to move to
+                // the previous/next month, week or day. Vertical scrolling and
+                // grid taps are unaffected (horizontal touch slop only).
+                .pointerInput(vm.calView) {
+                    var total = 0f
+                    val threshold = 56.dp.toPx()
+                    detectHorizontalDragGestures(
+                        onDragStart = { total = 0f },
+                        onDragEnd = {
+                            when {
+                                total <= -threshold -> vm.calNext()
+                                total >= threshold -> vm.calPrev()
+                            }
+                        },
+                    ) { _, dragAmount -> total += dragAmount }
+                }
                 .verticalScroll(rememberScrollState())
                 .padding(start = 18.dp, end = 18.dp, top = 2.dp, bottom = 14.dp),
         ) {
@@ -99,6 +124,7 @@ private fun CalendarHeader(vm: AppViewModel, data: AppData) {
         CalView.Week -> Fmt.weekTitle(startOfWeek(vm.selDate, data.prefs.monday))
         CalView.Day -> Fmt.dayTitle(vm.selDate)
     }
+    var pickerOpen by remember { mutableStateOf(false) }
     Row(
         Modifier
             .fillMaxWidth()
@@ -106,7 +132,8 @@ private fun CalendarHeader(vm: AppViewModel, data: AppData) {
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        Column(Modifier.weight(1f)) {
+        // Tapping the period title opens a date picker to jump anywhere.
+        Column(Modifier.weight(1f).tap { pickerOpen = true }) {
             Text("Calendar", fontSize = 12.sp, fontWeight = FontWeight.W500, color = c.sub)
             Text(
                 title,
@@ -142,6 +169,45 @@ private fun CalendarHeader(vm: AppViewModel, data: AppData) {
                 Icon(BentoIcons.Plus, null, tint = Color.White, modifier = Modifier.size(18.dp))
             }
         }
+    }
+    if (pickerOpen) {
+        DatePickerDialogModal(
+            initial = if (vm.calView == CalView.Month) vm.cursor.atDay(1) else vm.selDate,
+            onDismiss = { pickerOpen = false },
+            onPick = {
+                vm.jumpToDate(it)
+                pickerOpen = false
+            },
+        )
+    }
+}
+
+/** Material date picker in a dialog, themed to match the app. */
+@Composable
+private fun DatePickerDialogModal(
+    initial: LocalDate,
+    onDismiss: () -> Unit,
+    onPick: (LocalDate) -> Unit,
+) {
+    val state = rememberDatePickerState(
+        initialSelectedDateMillis = initial.atStartOfDay(java.time.ZoneOffset.UTC)
+            .toInstant().toEpochMilli(),
+    )
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = {
+                state.selectedDateMillis?.let {
+                    onPick(
+                        java.time.Instant.ofEpochMilli(it)
+                            .atZone(java.time.ZoneOffset.UTC).toLocalDate(),
+                    )
+                }
+            }) { Text("Jump") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    ) {
+        DatePicker(state = state, showModeToggle = false)
     }
 }
 

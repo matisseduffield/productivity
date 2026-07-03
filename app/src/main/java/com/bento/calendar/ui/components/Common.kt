@@ -7,6 +7,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -49,9 +50,16 @@ import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
@@ -354,9 +362,19 @@ private val SheetEasing = CubicBezierEasing(0.2f, 0.8f, 0.2f, 1f)
 fun BentoSheet(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
     val c = LocalBento.current
     val enter = remember { Animatable(0f) }
+    // Live drag offset (plain state, updated synchronously in the gesture);
+    // the settle-back-to-0 uses the Animatable so it can tween.
+    var dragY by remember { mutableFloatStateOf(0f) }
+    val settle = remember { Animatable(0f) }
+    var settleJob by remember { mutableStateOf<Job?>(null) }
+    val scope = rememberCoroutineScope()
+    // pointerInput is keyed on Unit so a new drag never resets mid-gesture;
+    // read the latest onDismiss through this to avoid a stale closure.
+    val currentDismiss by rememberUpdatedState(onDismiss)
     LaunchedEffect(Unit) { enter.animateTo(1f, tween(320, easing = SheetEasing)) }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val sheetMax = maxHeight * 0.86f
+        val dismissPx = with(LocalDensity.current) { 120.dp.toPx() }
         Box(
             Modifier
                 .fillMaxSize()
@@ -369,7 +387,7 @@ fun BentoSheet(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Uni
                 .align(Alignment.BottomCenter)
                 .graphicsLayer {
                     alpha = enter.value
-                    translationY = (1f - enter.value) * 70.dp.toPx()
+                    translationY = (1f - enter.value) * 70.dp.toPx() + dragY
                 }
                 .fillMaxWidth()
                 // Prototype .sheet is max-height:86% — sheets hug their content
@@ -382,13 +400,41 @@ fun BentoSheet(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Uni
                 .navigationBarsPadding()
                 .imePadding(),
         ) {
+            // Grab handle doubles as a drag-down-to-dismiss target.
             Box(
                 Modifier
                     .align(Alignment.CenterHorizontally)
-                    .padding(top = 12.dp, bottom = 14.dp)
-                    .size(36.dp, 4.dp)
-                    .background(c.cbb, CircleShape),
-            )
+                    .pointerInput(Unit) {
+                        detectVerticalDragGestures(
+                            // Cancel any in-flight settle so the new drag owns dragY.
+                            onDragStart = { settleJob?.cancel() },
+                            onDragEnd = {
+                                if (dragY > dismissPx) {
+                                    currentDismiss()
+                                } else {
+                                    val from = dragY
+                                    settleJob = scope.launch {
+                                        settle.snapTo(from)
+                                        settle.animateTo(0f, tween(200)) { dragY = value }
+                                    }
+                                }
+                            },
+                        ) { _, dy ->
+                            dragY = (dragY + dy).coerceAtLeast(0f)
+                        }
+                    }
+                    // Enlarge the touch target around the 36x4 handle.
+                    .padding(top = 8.dp, bottom = 10.dp)
+                    .size(52.dp, 20.dp)
+                    .padding(top = 4.dp, bottom = 12.dp),
+            ) {
+                Box(
+                    Modifier
+                        .align(Alignment.Center)
+                        .size(36.dp, 4.dp)
+                        .background(c.cbb, CircleShape),
+                )
+            }
             Column(
                 Modifier
                     .weight(1f, fill = false)
