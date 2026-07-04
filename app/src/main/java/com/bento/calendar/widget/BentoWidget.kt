@@ -48,10 +48,6 @@ import com.bento.calendar.ui.theme.hexColor
 import kotlinx.coroutines.flow.first
 import java.time.LocalDate
 
-/** Actions handled by MainActivity (same as the static launcher shortcuts). */
-private const val ACTION_NEW_EVENT = "com.bento.calendar.NEW_EVENT"
-private const val ACTION_NEW_TASK = "com.bento.calendar.NEW_TASK"
-
 // Row budget (dp) for the reported widget size: fixed overhead is the card
 // padding (14 top + 14 bottom), the header row, the spacer under it and the
 // open-tasks line; each event row is ~23dp. Estimates track WidgetBody below.
@@ -143,9 +139,9 @@ private fun WidgetBody(
                 maxLines = 1,
             )
             Spacer(GlanceModifier.defaultWeight())
-            ActionChip("+ Event", newIntent(context, ACTION_NEW_EVENT), c, accent)
+            WidgetChip("+ Event", launchIntent(context, WidgetActions.NEW_EVENT), c, accent)
             Spacer(GlanceModifier.width(6.dp))
-            ActionChip("+ Task", newIntent(context, ACTION_NEW_TASK), c, accent)
+            WidgetChip("+ Task", launchIntent(context, WidgetActions.NEW_TASK), c, accent)
         }
 
         Spacer(GlanceModifier.height(8.dp))
@@ -203,32 +199,3 @@ private fun EventRow(e: EventItem, use24h: Boolean, c: BentoColors) {
     }
 }
 
-@Composable
-private fun ActionChip(label: String, intent: Intent, c: BentoColors, accent: Color) {
-    Box(
-        modifier = GlanceModifier
-            .height(28.dp)
-            .cornerRadius(14.dp)
-            .background(ColorProvider(c.bd))
-            .clickable(actionStartActivityIntent(intent)),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            label,
-            style = TextStyle(
-                color = ColorProvider(accent),
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
-            ),
-            modifier = GlanceModifier.padding(horizontal = 10.dp),
-            maxLines = 1,
-        )
-    }
-}
-
-private fun newIntent(context: Context, action: String): Intent =
-    Intent(context, MainActivity::class.java)
-        .setAction(action)
-        .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-
-private fun catColor(cat: String): Color = hexColor(Cats.of(cat).colorHex)

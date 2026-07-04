@@ -6,7 +6,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Build
-import androidx.glance.appwidget.updateAll
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -27,9 +26,9 @@ class MidnightTickReceiver : BroadcastReceiver() {
         val pending = goAsync()
         CoroutineScope(Dispatchers.Default).launch {
             try {
-                // runCatching: a Glance hiccup must never take the process
-                // down, and the alarm must re-arm regardless.
-                runCatching { BentoWidget().updateAll(context) }
+                // Per-widget runCatching inside pushNow: a Glance hiccup must
+                // never take the process down, and the alarm re-arms regardless.
+                WidgetSync.pushNow(context)
             } finally {
                 arm(context)
                 pending.finish()

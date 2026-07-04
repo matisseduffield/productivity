@@ -130,10 +130,12 @@ class MainActivity : ComponentActivity() {
 
     private fun handleShortcutAction(intent: Intent?) {
         val action = intent?.action ?: return
-        if (action != ACTION_NEW_EVENT && action != ACTION_NEW_TASK && action != ACTION_NEW_NOTE) return
+        if (action !in WIDGET_ACTIONS) return
+        val dateExtra = intent.getStringExtra(EXTRA_DATE)
+        val noteIdExtra = intent.getStringExtra(EXTRA_NOTE_ID)
         // On a cold start the DataStore read hasn't landed yet (vm.data is null
-        // for the first frames); building the draft then would fall back to
-        // Prefs() defaults instead of the user's saved duration/reminder prefs.
+        // for the first frames); building drafts or opening notes then would
+        // act on defaults instead of the user's real data.
         lifecycleScope.launch {
             vm.data.first { it != null }
             when (action) {
@@ -144,6 +146,22 @@ class MainActivity : ComponentActivity() {
                 ACTION_NEW_EVENT -> vm.quickAddEvent()
                 ACTION_NEW_TASK -> vm.quickAddTask()
                 ACTION_NEW_NOTE -> vm.newNote()
+                ACTION_OPEN_SEARCH -> vm.openSearch()
+                ACTION_OPEN_TASKS -> vm.setTab(com.bento.calendar.ui.Tab.Tasks)
+                ACTION_OPEN_DAY -> {
+                    val date = try {
+                        java.time.LocalDate.parse(dateExtra)
+                    } catch (_: Exception) {
+                        java.time.LocalDate.now()
+                    }
+                    vm.weekStripTap(date)
+                }
+                ACTION_OPEN_NOTE -> {
+                    vm.setTab(com.bento.calendar.ui.Tab.Notes)
+                    // openNote runs the PIN flow for locked notes; a stale id
+                    // (note deleted since the widget rendered) is a no-op.
+                    noteIdExtra?.let { vm.openNote(it) }
+                }
             }
         }
     }
@@ -171,6 +189,17 @@ class MainActivity : ComponentActivity() {
         const val ACTION_NEW_EVENT = "com.bento.calendar.NEW_EVENT"
         const val ACTION_NEW_TASK = "com.bento.calendar.NEW_TASK"
         const val ACTION_NEW_NOTE = "com.bento.calendar.NEW_NOTE"
+        const val ACTION_OPEN_SEARCH = "com.bento.calendar.OPEN_SEARCH"
+        const val ACTION_OPEN_TASKS = "com.bento.calendar.OPEN_TASKS"
+        const val ACTION_OPEN_DAY = "com.bento.calendar.OPEN_DAY"
+        const val ACTION_OPEN_NOTE = "com.bento.calendar.OPEN_NOTE"
+        const val EXTRA_DATE = "date"
+        const val EXTRA_NOTE_ID = "noteId"
+
+        val WIDGET_ACTIONS = setOf(
+            ACTION_NEW_EVENT, ACTION_NEW_TASK, ACTION_NEW_NOTE,
+            ACTION_OPEN_SEARCH, ACTION_OPEN_TASKS, ACTION_OPEN_DAY, ACTION_OPEN_NOTE,
+        )
 
         // Some file managers serve .json as text or octet-stream MIME types.
         val IMPORT_MIME_TYPES = arrayOf("application/json", "text/*", "application/octet-stream")

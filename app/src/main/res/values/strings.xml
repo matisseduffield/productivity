@@ -5,4 +5,9 @@
     <string name="shortcut_new_task">New task</string>
     <string name="shortcut_new_note">New note</string>
     <string name="widget_description">Today\'s events and quick add</string>
+    <string name="widget_up_next_description">Your next event at a glance</string>
+    <string name="widget_tasks_description">Open tasks with tap-to-complete</string>
+    <string name="widget_month_description">Mini month with event dots</string>
+    <string name="widget_quick_add_description">One-tap new event, task, note and search</string>
+    <string name="widget_note_description">Your pinned note</string>
 </resources>

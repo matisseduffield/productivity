@@ -41,6 +41,15 @@ data class ChangelogEntry(val version: String, val date: String, val changes: Li
 
 val CHANGELOG = listOf(
     ChangelogEntry(
+        "1.7.0", "July 2026",
+        listOf(
+            "Five new home-screen widgets: Up next, Tasks, Month, Quick add, and Pinned note",
+            "Complete tasks straight from the Tasks widget",
+            "Tap a day on the Month widget to open it in the app",
+            "All widgets follow your theme and accent, and come in multiple sizes",
+        ),
+    ),
+    ChangelogEntry(
         "1.6.0", "July 2026",
         listOf(
             "Home-screen widget: today's events at a glance with quick add",
