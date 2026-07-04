@@ -6,7 +6,10 @@ import androidx.compose.ui.graphics.Color
 import com.bento.calendar.data.Category
 
 fun hexColor(hex: String): Color {
-    val v = hex.removePrefix("#").toLong(16)
+    // Defense in depth: a malformed persisted hex (e.g. from a hand-edited
+    // backup) must never crash the theme root — fall back to the default
+    // accent (Accents.DEFAULT, #8B6FE8) instead of throwing.
+    val v = hex.removePrefix("#").toLongOrNull(16) ?: return Color(0xFF8B6FE8)
     return Color(0xFF000000L or v)
 }
 

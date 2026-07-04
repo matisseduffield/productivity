@@ -7,6 +7,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.bento.calendar.data.Accents
 import com.bento.calendar.data.AppData
 import com.bento.calendar.data.AppGraph
 import com.bento.calendar.data.Cats
@@ -30,6 +31,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.encodeToJsonElement
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.YearMonth
@@ -418,6 +423,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         twoTap(Arm.EVENT) {
             mut { x -> x.copy(events = x.events.filter { it.id != id }) }
             evDraft = null
+        }
+    }
+
+    /**
+     * Day-view drag-to-reschedule: shift an event to a new start, preserving
+     * its duration. Recurring events shift the whole series' time, consistent
+     * with the app's edit-the-series semantics.
+     */
+    fun moveEvent(id: String, newStartMin: Int) {
+        val e = data.value?.events?.firstOrNull { it.id == id } ?: return
+        val dur = (e.end.toMins() - e.start.toMins()).coerceAtLeast(1)
+        val s = newStartMin.coerceIn(0, 1439 - dur)
+        if (s == e.start.toMins()) return
+        mut { x ->
+            x.copy(events = x.events.map {
+                if (it.id == id) it.copy(start = minsToHm(s), end = minsToHm(s + dur)) else it
+            })
         }
     }
 
@@ -916,4 +938,83 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun dismissUpdate() {
         updateDismissed = true
     }
+
+    // ---- Backup: export / import ----
+
+    private val backupJson = kotlinx.serialization.json.Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = true
+        prettyPrint = true
+    }
+
+    /** Full store as pretty JSON, or null while still loading. */
+    fun exportJson(): String? = data.value?.let {
+        // Strip the PIN so the plaintext backup never leaks it; import
+        // tolerates a null pin (locked notes fall back to the Set-PIN flow).
+        val obj = backupJson
+            .encodeToJsonElement(AppData.serializer(), it.copy(pin = null)) as JsonObject
+        // The format marker is added on the raw object rather than as a
+        // defaulted @Serializable field: a defaulted field would be silently
+        // filled in when decoding foreign JSON (defeating the import check),
+        // while a non-defaulted one would reject all existing legacy backups.
+        val marked = JsonObject(obj + (BACKUP_FORMAT_KEY to JsonPrimitive(BACKUP_FORMAT)))
+        backupJson.encodeToString(JsonObject.serializer(), marked)
+    }
+
+    /**
+     * Replace the entire store with a backup file's content. Returns false if
+     * the text isn't a valid backup. Session state is reset like a fresh open.
+     */
+    fun importFromJson(text: String): Boolean {
+        val imported = try {
+            // Reject arbitrary JSON: AppData's fields all have defaults and
+            // backupJson ignores unknown keys, so "{}" or any unrelated file
+            // (package.json...) would decode to an empty store and wipe
+            // everything. Require the format marker (new exports) or, for
+            // legacy backups — which always contain every top-level key
+            // because exportJson uses encodeDefaults — at least one known key.
+            val obj = backupJson.parseToJsonElement(text) as? JsonObject ?: return false
+            val hasMarker =
+                (obj[BACKUP_FORMAT_KEY] as? JsonPrimitive)?.content == BACKUP_FORMAT
+            val knownKeys = listOf("events", "tasks", "notes", "prefs", "pin")
+            if (!hasMarker && knownKeys.none { obj.containsKey(it) }) return false
+            val decoded = backupJson.decodeFromJsonElement(AppData.serializer(), obj)
+            // Semantic validation: date/start/end/due are plain strings, and a
+            // value like "2026-7-2" or "9:00" would persist fine but then
+            // crash every render (occursOn -> LocalDate.parse) with no
+            // recovery short of clearing app data.
+            decoded.events.forEach { ev ->
+                ev.date.toDate()
+                require(ev.end.toMins() > ev.start.toMins())
+            }
+            decoded.tasks.forEach { it.due?.toDate() }
+            // A bad accent crashes BentoTheme at the root; normalize instead
+            // of rejecting. Clamp durDef/remindDef so newEvent/saveEvent can't
+            // generate unparseable draft times.
+            val accent = decoded.prefs.accent
+                .takeIf { it.removePrefix("#").toLongOrNull(16) != null }
+                ?: Accents.DEFAULT
+            decoded.copy(
+                prefs = decoded.prefs.copy(
+                    accent = accent,
+                    durDef = decoded.prefs.durDef.coerceAtLeast(1),
+                    remindDef = decoded.prefs.remindDef?.coerceAtLeast(0),
+                ),
+            )
+        } catch (_: Exception) {
+            return false
+        }
+        dismissUndo()
+        mut { imported }
+        unlocked = emptySet()
+        openNoteId = null
+        doneOpen = false
+        dismissed = emptySet()
+        closeSheets()
+        return true
+    }
 }
+
+/** Marker written into exports and accepted (or legacy keys) on import. */
+private const val BACKUP_FORMAT_KEY = "format"
+private const val BACKUP_FORMAT = "bento.calendar.v1"

@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Bento Calendar</string>
+    <string name="shortcut_new_event">New event</string>
+    <string name="shortcut_new_task">New task</string>
+    <string name="shortcut_new_note">New note</string>
 </resources>

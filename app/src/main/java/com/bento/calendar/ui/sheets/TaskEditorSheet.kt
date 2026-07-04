@@ -1,10 +1,15 @@
 package com.bento.calendar.ui.sheets
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
@@ -31,7 +36,9 @@ import com.bento.calendar.ui.components.DangerTextButton
 import com.bento.calendar.ui.components.FieldLabel
 import com.bento.calendar.ui.components.PrimaryButton
 import com.bento.calendar.ui.components.TextLink
+import com.bento.calendar.ui.components.pressable
 import com.bento.calendar.ui.theme.LocalBento
+import java.time.LocalDate
 import java.time.LocalDateTime
 
 /**
@@ -90,6 +97,23 @@ fun TaskEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 display = d.due?.let { Fmt.dayShort(it) } ?: "No due date",
                 onPick = { v -> vm.updateTaskDraft { it.copy(due = v) } },
             )
+            // Quick-pick chips: relative dates off today, mirroring the pill
+            // language of CategoryPills below.
+            val today = LocalDate.now()
+            Row(
+                Modifier.padding(top = 7.dp),
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                DueChip("Today", active = d.due == today) {
+                    vm.updateTaskDraft { it.copy(due = LocalDate.now()) }
+                }
+                DueChip("Tomorrow", active = d.due == today.plusDays(1)) {
+                    vm.updateTaskDraft { it.copy(due = LocalDate.now().plusDays(1)) }
+                }
+                DueChip("Next week", active = d.due == today.plusDays(7)) {
+                    vm.updateTaskDraft { it.copy(due = LocalDate.now().plusDays(7)) }
+                }
+            }
         }
         Column(Modifier.padding(top = 15.dp)) {
             FieldLabel("Category")
@@ -106,5 +130,25 @@ fun TaskEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 onClick = vm::deleteTask,
             )
         }
+    }
+}
+
+/** Due-date quick chip — same pill language as CategoryPills (Common.kt). */
+@Composable
+private fun DueChip(label: String, active: Boolean, onClick: () -> Unit) {
+    val c = LocalBento.current
+    Box(
+        Modifier
+            .pressable(onClick = onClick)
+            .background(if (active) c.accTint(0.12f) else c.inp, CircleShape)
+            .border(1.dp, if (active) c.acc else c.bd, CircleShape)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        Text(
+            label,
+            fontSize = 11.5.sp,
+            fontWeight = FontWeight.W600,
+            color = if (active) c.tx else c.sub,
+        )
     }
 }

@@ -1,6 +1,7 @@
 package com.bento.calendar.ui.calendar
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -9,6 +10,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -41,8 +43,11 @@ import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,6 +57,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
@@ -60,14 +66,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import com.bento.calendar.data.AppData
 import com.bento.calendar.data.Cats
 import com.bento.calendar.data.EventItem
 import com.bento.calendar.data.Recur
+import com.bento.calendar.data.minsToHm
 import com.bento.calendar.data.occurrencesOn
 import com.bento.calendar.data.toMins
 import com.bento.calendar.ui.AppViewModel
@@ -89,6 +98,9 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.YearMonth
 import kotlin.math.floor
+import kotlin.math.roundToInt
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 
 /**
  * Identity of the PERIOD being rendered (month start / week start / day), used
@@ -795,32 +807,15 @@ private fun DayView(vm: AppViewModel, data: AppData, now: LocalDateTime, selDate
                 // end stay inside the 952dp timeline.
                 val h = maxOf((en - s) / 60f * 56f - 3f, 30f)
                 val y = minOf((s - 360) / 60f * 56f, 952f - h)
-                Column(
-                    Modifier
-                        .offset(x = 4.dp + slice * p.col, y = y.dp)
-                        .width(slice - (if (p.col < p.cols - 1) 3.dp else 0.dp))
-                        .height(h.dp)
-                        .clip(RoundedCornerShape(11.dp))
-                        .background(Cats.of(e.cat).color)
-                        .tap { vm.openEvent(e) }
-                        .padding(horizontal = 10.dp, vertical = 7.dp),
-                ) {
-                    Text(
-                        e.title,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.W700,
-                        color = OnCategory,
-                        lineHeight = 1.3.em,
-                    )
-                    Text(
-                        Fmt.time(e.start, use24h) + " – " + Fmt.time(e.end, use24h) +
-                            (if (e.loc.isNotEmpty()) " · " + e.loc else ""),
-                        fontSize = 9.5.sp,
-                        fontWeight = FontWeight.W600,
-                        color = OnCategory.copy(alpha = 0.8f),
-                        modifier = Modifier.padding(top = 1.dp),
-                    )
-                }
+                DayEventBlock(
+                    vm = vm,
+                    e = e,
+                    x = 4.dp + slice * p.col,
+                    y = y,
+                    w = slice - (if (p.col < p.cols - 1) 3.dp else 0.dp),
+                    h = h,
+                    use24h = use24h,
+                )
             }
             if (selDate == today && nowMin in 360..1380) {
                 NowLine(((nowMin - 360) / 60f * 56f).dp)
@@ -828,3 +823,189 @@ private fun DayView(vm: AppViewModel, data: AppData, now: LocalDateTime, selDate
         }
     }
 }
+
+/**
+ * One Day-view event block. Tap opens the editor; long-press then vertical
+ * drag reschedules: the block follows the finger snapped to 15-minute steps
+ * (14dp per 15 min at 56dp/hour), the prospective new start is appended to
+ * the meta line, and release commits via [AppViewModel.moveEvent]. Ghost,
+ * label and commit all derive from ONE [dragTargetStart] value relative to
+ * the event's TRUE start, so a zero-step jitter after the long-press is a
+ * strict no-op (edge-clamped or off-grid events are never silently re-timed)
+ * and the committed time is exactly what was previewed. After release the
+ * ghost holds at the target until the async store update re-renders the
+ * block, so it never flashes back to the old slot. A cancelled drag animates
+ * the block back to its slot.
+ *
+ * [y] and [h] are dp values from the grid top / block height as computed by
+ * the day layout; the drag state deliberately lives HERE, outside the
+ * remember(data.events, selDate) layout memo, keyed per event id.
+ */
+@Composable
+private fun DayEventBlock(
+    vm: AppViewModel,
+    e: EventItem,
+    x: Dp,
+    y: Float,
+    w: Dp,
+    h: Float,
+    use24h: Boolean,
+) {
+    val haptic = LocalHapticFeedback.current
+    val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
+
+    // Raw drag offset in px; rendering snaps it to the 15-min grid. Keyed on
+    // the event id so a recycled slot never inherits another block's offset.
+    var dragOffsetY by remember(e.id) { mutableFloatStateOf(0f) }
+    var dragging by remember(e.id) { mutableStateOf(false) }
+    val settle = remember(e.id) { Animatable(0f) }
+    var settleJob by remember(e.id) { mutableStateOf<Job?>(null) }
+    // Committed-but-not-yet-rendered start: keeps the ghost at the released
+    // target until the async store write lands and re-renders the block, so
+    // it never flashes back to the old slot. Stores the CLAMPED value that
+    // moveEvent will commit, so the held ghost equals the post-commit y.
+    var pendingStartMin by remember(e.id) { mutableStateOf<Int?>(null) }
+    // The gesture is keyed on e.id only; read the event and geometry through
+    // these so the handlers never see stale values after a store update
+    // re-lays the day out (or an edit changes the event's times).
+    val curE by rememberUpdatedState(e)
+    val curY by rememberUpdatedState(y)
+    val curH by rememberUpdatedState(h)
+    // Clear the hold once (or if) the committed start arrives — this runs
+    // AFTER the frame that applied the new y, so the handoff is seamless; it
+    // also fires if the vm clamped to a different value than requested.
+    LaunchedEffect(e.id, e.start) { pendingStartMin = null }
+
+    // Prospective TRUE-start-relative target while dragging — the single
+    // source of truth for the meta-line label, the ghost and the commit.
+    val durMin = e.end.toMins() - e.start.toMins()
+    val visDur = visDurMin(h)
+    val newStartMin = dragTargetStart(e.start.toMins(), durMin, visDur, dragOffsetY / density.density)
+
+    Column(
+        Modifier
+            .offset(x = x, y = y.dp)
+            // Live drag offset layered on top of the static position: snapped
+            // to 15-min steps while dragging, raw during the cancel settle.
+            .offset {
+                val pend = pendingStartMin
+                val extra = if (dragging) {
+                    val ns = dragTargetStart(e.start.toMins(), durMin, visDur, dragOffsetY.toDp().value)
+                    (snappedGhostY(ns, h) - y).dp.roundToPx()
+                } else if (pend != null) {
+                    // Hold at the committed target until the store update lands.
+                    (snappedGhostY(pend, h) - y).dp.roundToPx()
+                } else {
+                    dragOffsetY.roundToInt()
+                }
+                IntOffset(0, extra)
+            }
+            .zIndex(if (dragging || pendingStartMin != null) 1f else 0f)
+            .graphicsLayer {
+                if (dragging) {
+                    alpha = 0.92f
+                    scaleX = 1.02f
+                    scaleY = 1.02f
+                }
+            }
+            .width(w)
+            .height(h.dp)
+            .clip(RoundedCornerShape(11.dp))
+            .background(Cats.of(e.cat).color)
+            .tap { vm.openEvent(e) }
+            .pointerInput(e.id) {
+                detectDragGesturesAfterLongPress(
+                    onDragStart = {
+                        settleJob?.cancel()
+                        pendingStartMin = null
+                        dragOffsetY = 0f
+                        dragging = true
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    },
+                    onDragEnd = {
+                        dragging = false
+                        // Commit only on a real move (>= 1 snapped step): a
+                        // post-long-press jitter can never re-time the event.
+                        val steps = dragSteps(dragOffsetY.toDp().value)
+                        if (steps != 0) {
+                            val startMin = curE.start.toMins()
+                            val dur = curE.end.toMins() - startMin
+                            val ns = dragTargetStart(startMin, dur, visDurMin(curH), dragOffsetY.toDp().value)
+                            // Mirror moveEvent's clamp/no-op so the held ghost
+                            // equals what will actually be committed, and skip
+                            // when nothing changes (moveEvent early-returns
+                            // with no emission — pending would never clear).
+                            val s = ns.coerceIn(0, 1439 - dur.coerceAtLeast(1))
+                            if (s != startMin) {
+                                pendingStartMin = s
+                                vm.moveEvent(e.id, ns)
+                            }
+                        }
+                        dragOffsetY = 0f
+                    },
+                    onDragCancel = {
+                        dragging = false
+                        // Settle back from the snapped ghost position (what is
+                        // on screen right now) so there is no jump at release.
+                        val startMin = curE.start.toMins()
+                        val dur = curE.end.toMins() - startMin
+                        val ns = dragTargetStart(startMin, dur, visDurMin(curH), dragOffsetY.toDp().value)
+                        val from = ((snappedGhostY(ns, curH) - curY).dp).toPx()
+                        settleJob = scope.launch {
+                            settle.snapTo(from)
+                            settle.animateTo(0f, tween(220)) { dragOffsetY = value }
+                        }
+                    },
+                ) { change, amt ->
+                    change.consume()
+                    dragOffsetY += amt.y
+                }
+            }
+            .padding(horizontal = 10.dp, vertical = 7.dp),
+    ) {
+        Text(
+            e.title,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.W700,
+            color = OnCategory,
+            lineHeight = 1.3.em,
+        )
+        Text(
+            Fmt.time(e.start, use24h) + " – " + Fmt.time(e.end, use24h) +
+                (if (e.loc.isNotEmpty()) " · " + e.loc else "") +
+                (if (dragging) " → " + Fmt.time(minsToHm(newStartMin), use24h) else ""),
+            fontSize = 9.5.sp,
+            fontWeight = FontWeight.W600,
+            color = OnCategory.copy(alpha = 0.8f),
+            modifier = Modifier.padding(top = 1.dp),
+        )
+    }
+}
+
+/** Whole 15-minute steps for a raw vertical drag ([dragDp] in dp; 14dp per 15 min at 56dp/hour). */
+private fun dragSteps(dragDp: Float): Int = (dragDp / 14f).roundToInt()
+
+/** Visible duration (grid minutes) a rendered block of height [h] dp stands for (inverse of h = dur/60*56 - 3, floored at 30). */
+private fun visDurMin(h: Float): Int = ((h + 3f) / 56f * 60f).roundToInt()
+
+/**
+ * TRUE-start-relative, grid-clamped drag target — the single source of truth
+ * for the drag ghost, the meta-line label AND the committed move. Steps from
+ * the event's actual start in 15-minute increments (so off-grid events keep
+ * their minute offset, and a zero-step jitter is a strict no-op), clamped so
+ * the rendered block stays on the 06:00-23:00 grid ([visDurMin] keeps
+ * bottom-clipped events at their pin instead of yanking them up) and so the
+ * full [durMin] still fits before midnight (moveEvent's own cap, mirrored so
+ * the previewed time IS the committed time). coerceAtMost BEFORE
+ * coerceAtLeast: an event longer than the 17h grid pins to 06:00 rather than
+ * throwing from an empty range.
+ */
+private fun dragTargetStart(startMin: Int, durMin: Int, visDurMin: Int, dragDp: Float): Int =
+    (startMin + dragSteps(dragDp) * 15)
+        .coerceAtMost(minOf(1380 - visDurMin, 1439 - durMin.coerceAtLeast(1)))
+        .coerceAtLeast(360)
+
+/** Absolute ghost y (dp from grid top) for a snapped start, kept on the 952dp grid. */
+private fun snappedGhostY(startMin: Int, h: Float): Float =
+    ((startMin - 360) / 15f * 14f).coerceIn(0f, 952f - h)

@@ -20,6 +20,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -45,11 +50,18 @@ import com.bento.calendar.ui.components.pressable
 import com.bento.calendar.ui.theme.BentoIcons
 import com.bento.calendar.ui.theme.LocalBento
 import com.bento.calendar.ui.theme.hexColor
+import kotlinx.coroutines.delay
 import java.time.LocalDateTime
 
 /** Full-page Settings overlay (prototype markup 226-251, logic 654-673). */
 @Composable
-fun SettingsOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
+fun SettingsOverlay(
+    vm: AppViewModel,
+    data: AppData,
+    now: LocalDateTime,
+    onExport: () -> Unit = {},
+    onImport: () -> Unit = {},
+) {
     val c = LocalBento.current
     val prefs = data.prefs
     FullOverlay {
@@ -231,6 +243,40 @@ fun SettingsOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 // ---- Data ----
                 SectionLabel("Data")
                 SettingsCard {
+                    SettingsRow(
+                        icon = BentoIcons.Download,
+                        title = "Export data",
+                        sub = "Everything, incl. locked notes, as a file",
+                    ) {
+                        TextLink("Export", onClick = onExport)
+                    }
+                    // Import replaces the whole store, so it gets the app's
+                    // two-tap confirm — kept local (remember + timeout) to
+                    // match the VM's twoTap feel without touching Arm keys.
+                    var importArmed by remember { mutableStateOf(false) }
+                    LaunchedEffect(importArmed) {
+                        if (importArmed) {
+                            delay(2500)
+                            importArmed = false
+                        }
+                    }
+                    SettingsRow(
+                        icon = BentoIcons.Doc,
+                        title = "Import data",
+                        sub = "Replace everything with a backup",
+                    ) {
+                        TextLink(
+                            if (importArmed) "Sure?" else "Import",
+                            onClick = {
+                                if (importArmed) {
+                                    importArmed = false
+                                    onImport()
+                                } else {
+                                    importArmed = true
+                                }
+                            },
+                        )
+                    }
                     SettingsRow(
                         icon = BentoIcons.Trash,
                         title = "Start fresh",

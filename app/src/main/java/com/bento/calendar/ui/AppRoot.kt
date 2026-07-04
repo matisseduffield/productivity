@@ -52,7 +52,11 @@ import com.bento.calendar.ui.theme.LocalBento
 import com.bento.calendar.ui.today.TodayScreen
 
 @Composable
-fun AppRoot(vm: AppViewModel) {
+fun AppRoot(
+    vm: AppViewModel,
+    onExport: () -> Unit = {},
+    onImport: () -> Unit = {},
+) {
     val data by vm.data.collectAsState()
     val now by vm.now.collectAsState()
     val d = data
@@ -105,7 +109,7 @@ fun AppRoot(vm: AppViewModel) {
             // Overlay stack, prototype z-order: full-page overlays, then search,
             // then bottom sheets on top.
             if (vm.openNoteId != null) NoteEditorOverlay(vm, d, now)
-            if (vm.settingsOpen) SettingsOverlay(vm, d, now)
+            if (vm.settingsOpen) SettingsOverlay(vm, d, now, onExport = onExport, onImport = onImport)
             if (vm.searchOpen) SearchOverlay(vm, d, now)
             if (vm.fabOpen) CreateSheet(vm)
             if (vm.evDraft != null) EventEditorSheet(vm, d, now)

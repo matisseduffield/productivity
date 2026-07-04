@@ -30,6 +30,11 @@ class BootReceiver : BroadcastReceiver() {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 ReminderScheduler.reschedule(context, AppGraph.repository(context).data.first())
+                // The scheduler chain only covers upcoming reminders; snoozes
+                // armed by ReminderReceiver.handleSnooze are separate one-shot
+                // alarms that a reboot silently discards. Re-arm the persisted
+                // ones (posting any that came due while the device was down).
+                ReminderReceiver.restorePendingSnoozes(context)
             } finally {
                 pending.finish()
             }

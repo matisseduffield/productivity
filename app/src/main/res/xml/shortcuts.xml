@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Static launcher shortcuts (long-press the app icon): each one launches
+     MainActivity with a custom action it maps to the matching quick-create. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="new_event"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_event"
+        android:shortcutShortLabel="@string/shortcut_new_event">
+        <intent
+            android:action="com.bento.calendar.NEW_EVENT"
+            android:targetPackage="com.bento.calendar"
+            android:targetClass="com.bento.calendar.MainActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="new_task"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_task"
+        android:shortcutShortLabel="@string/shortcut_new_task">
+        <intent
+            android:action="com.bento.calendar.NEW_TASK"
+            android:targetPackage="com.bento.calendar"
+            android:targetClass="com.bento.calendar.MainActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="new_note"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_note"
+        android:shortcutShortLabel="@string/shortcut_new_note">
+        <intent
+            android:action="com.bento.calendar.NEW_NOTE"
+            android:targetPackage="com.bento.calendar"
+            android:targetClass="com.bento.calendar.MainActivity" />
+    </shortcut>
+</shortcuts>
