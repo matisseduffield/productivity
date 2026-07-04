@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Picker preview mocking the pinned-note widget: eyebrow, title, body lines. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="180dp" android:height="180dp"
+    android:viewportWidth="180" android:viewportHeight="180">
+    <path android:fillColor="#14161D"
+        android:pathData="M16,0 h148 a16,16 0 0 1 16,16 v148 a16,16 0 0 1 -16,16 H16 a16,16 0 0 1 -16,-16 V16 A16,16 0 0 1 16,0 z" />
+    <path android:fillColor="#8B6FE8" android:pathData="M14,16 h44 a3,3 0 0 1 0,6 h-44 a3,3 0 0 1 0,-6 z" />
+    <path android:fillColor="#EDEEF4" android:pathData="M14,32 h84 a4.5,4.5 0 0 1 0,9 h-84 a4.5,4.5 0 0 1 0,-9 z" />
+    <path android:fillColor="#7E8494" android:pathData="M14,54 h140 a3,3 0 0 1 0,6 h-140 a3,3 0 0 1 0,-6 z" />
+    <path android:fillColor="#7E8494" android:pathData="M14,68 h120 a3,3 0 0 1 0,6 h-120 a3,3 0 0 1 0,-6 z" />
+    <path android:fillColor="#7E8494" android:pathData="M14,82 h132 a3,3 0 0 1 0,6 h-132 a3,3 0 0 1 0,-6 z" />
+    <path android:fillColor="#7E8494" android:pathData="M14,96 h96 a3,3 0 0 1 0,6 h-96 a3,3 0 0 1 0,-6 z" />
+    <path android:fillColor="#565D6E" android:pathData="M14,156 h52 a2.5,2.5 0 0 1 0,5 h-52 a2.5,2.5 0 0 1 0,-5 z" />
+</vector>

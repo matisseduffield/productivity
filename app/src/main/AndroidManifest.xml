@@ -2,10 +2,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- Only used by the in-app updater (GitHub release check + APK download);
-         all app data stays on-device. -->
+         all app data stays on-device. REQUEST_INSTALL_PACKAGES lives in the
+         github flavor's manifest — the Play flavor must not carry it. -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Read-only overlay of the device's calendars; requested at runtime
+         only when the user enables it in Settings. Bento never writes. -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Exact alarms for event reminders: SCHEDULE_ for API 31-32 (granted by
          default), USE_ for 33+ where it is allowed for calendar apps. -->

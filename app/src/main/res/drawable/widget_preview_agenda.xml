@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Picker preview mocking the agenda widget: header + quick-add chips,
+     three event rows (time bar · category dot · title bar), task line. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="250dp" android:height="140dp"
+    android:viewportWidth="250" android:viewportHeight="140">
+    <path android:fillColor="#14161D"
+        android:pathData="M16,0 h218 a16,16 0 0 1 16,16 v108 a16,16 0 0 1 -16,16 H16 a16,16 0 0 1 -16,-16 V16 A16,16 0 0 1 16,0 z" />
+    <path android:fillColor="#7E8494" android:pathData="M14,16 h30 a4,4 0 0 1 0,8 h-30 a4,4 0 0 1 0,-8 z" />
+    <path android:fillColor="#EDEEF4" android:pathData="M50,15 h52 a5,5 0 0 1 0,10 h-52 a5,5 0 0 1 0,-10 z" />
+    <path android:fillColor="#1E212B" android:pathData="M148,11 h42 a9,9 0 0 1 0,18 h-42 a9,9 0 0 1 0,-18 z" />
+    <path android:fillColor="#1E212B" android:pathData="M196,11 h40 a9,9 0 0 1 0,18 h-40 a9,9 0 0 1 0,-18 z" />
+    <path android:fillColor="#8B6FE8" android:pathData="M156,17 h26 a3,3 0 0 1 0,6 h-26 a3,3 0 0 1 0,-6 z" />
+    <path android:fillColor="#8B6FE8" android:pathData="M204,17 h24 a3,3 0 0 1 0,6 h-24 a3,3 0 0 1 0,-6 z" />
+
+    <path android:fillColor="#565D6E" android:pathData="M14,46 h26 a3.5,3.5 0 0 1 0,7 h-26 a3.5,3.5 0 0 1 0,-7 z" />
+    <path android:fillColor="#7BA7F7" android:pathData="M52,46 a3.5,3.5 0 1 0 7,0 a3.5,3.5 0 1 0 -7,0 z m3.5,3.2" />
+    <path android:fillColor="#EDEEF4" android:pathData="M66,46 h96 a3.5,3.5 0 0 1 0,7 h-96 a3.5,3.5 0 0 1 0,-7 z" />
+
+    <path android:fillColor="#565D6E" android:pathData="M14,68 h26 a3.5,3.5 0 0 1 0,7 h-26 a3.5,3.5 0 0 1 0,-7 z" />
+    <path android:fillColor="#5BD9A5" android:pathData="M52,68 a3.5,3.5 0 1 0 7,0 a3.5,3.5 0 1 0 -7,0 z m3.5,3.2" />
+    <path android:fillColor="#EDEEF4" android:pathData="M66,68 h72 a3.5,3.5 0 0 1 0,7 h-72 a3.5,3.5 0 0 1 0,-7 z" />
+
+    <path android:fillColor="#565D6E" android:pathData="M14,90 h26 a3.5,3.5 0 0 1 0,7 h-26 a3.5,3.5 0 0 1 0,-7 z" />
+    <path android:fillColor="#F08FAE" android:pathData="M52,90 a3.5,3.5 0 1 0 7,0 a3.5,3.5 0 1 0 -7,0 z m3.5,3.2" />
+    <path android:fillColor="#EDEEF4" android:pathData="M66,90 h110 a3.5,3.5 0 0 1 0,7 h-110 a3.5,3.5 0 0 1 0,-7 z" />
+
+    <path android:fillColor="#7E8494" android:pathData="M14,116 h58 a3,3 0 0 1 0,6 h-58 a3,3 0 0 1 0,-6 z" />
+</vector>

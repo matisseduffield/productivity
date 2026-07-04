@@ -16,7 +16,17 @@ data class AppData(
     val notes: List<NoteItem> = emptyList(),
     val prefs: Prefs = Prefs(),
     val pin: String? = null,
-)
+    /** User-editable categories; defaults to the classic four so pre-2.0
+     *  stores and backups load unchanged. */
+    val categories: List<Category> = Cats.DEFAULTS,
+) {
+    /** Category lookup with a stable fallback (first category) so orphaned
+     *  ids from deleted categories never crash rendering. */
+    fun categoryOf(id: String): Category =
+        categories.firstOrNull { it.id == id }
+            ?: categories.firstOrNull()
+            ?: Cats.DEFAULTS[0]
+}
 
 @Serializable
 data class EventItem(
@@ -32,6 +42,12 @@ data class EventItem(
     val loc: String = "",
     /** All-day events store start 00:00 / end 23:59; reminders fire off 00:00. */
     val allDay: Boolean = false,
+    /**
+     * Occurrence dates (ISO) excluded from a recurring series — created by
+     * "delete this event only" or "edit this event only" (which excludes the
+     * date and spawns a standalone event with the edits).
+     */
+    val exDates: List<String> = emptyList(),
 )
 
 @Serializable
@@ -42,6 +58,11 @@ data class TaskItem(
     val due: String? = null,
     /** Category id or "" for none. */
     val cat: String = "",
+    /**
+     * Repeating tasks ([Recur] values): completing one advances its due date
+     * to the next occurrence instead of marking it done.
+     */
+    val recur: String = Recur.NONE,
 )
 
 @Serializable
@@ -67,6 +88,10 @@ data class Prefs(
     val durDef: Int = 60,
     /** Last few search queries, most recent first. */
     val recents: List<String> = emptyList(),
+    /** Read-only device (Google) calendar overlay. */
+    val deviceCalsEnabled: Boolean = false,
+    /** Device calendar ids the user opted in; empty = all visible calendars. */
+    val deviceCalIds: List<Long> = emptyList(),
 )
 
 object Recur {
@@ -76,6 +101,7 @@ object Recur {
     const val MONTHLY = "monthly"
 }
 
+@Serializable
 data class Category(val id: String, val label: String, val colorHex: String)
 
 object Cats {
@@ -84,15 +110,20 @@ object Cats {
     const val PERSONAL = "personal"
     const val SOCIAL = "social"
 
-    val ALL = listOf(
+    /** The classic four — the default set and the pre-2.0 fallback. */
+    val DEFAULTS = listOf(
         Category(WORK, "Work", "#7BA7F7"),
         Category(FITNESS, "Fitness", "#5BD9A5"),
         Category(PERSONAL, "Personal", "#F2C05A"),
         Category(SOCIAL, "Social", "#F08FAE"),
     )
 
-    /** Unknown/blank ids fall back to Work, matching the prototype. */
-    fun of(id: String): Category = ALL.firstOrNull { it.id == id } ?: ALL[0]
+    /** Swatches offered when creating/recoloring a category. */
+    val PALETTE = listOf(
+        "#7BA7F7", "#5BD9A5", "#F2C05A", "#F08FAE",
+        "#8B6FE8", "#5B8DEF", "#34B98C", "#E08B4C",
+        "#EF6D6D", "#5BC8D9", "#B79BF0", "#9BB068",
+    )
 }
 
 data class AccentOption(val name: String, val hex: String)

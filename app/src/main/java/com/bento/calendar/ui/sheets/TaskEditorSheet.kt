@@ -25,10 +25,12 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bento.calendar.data.AppData
+import com.bento.calendar.data.Recur
 import com.bento.calendar.ui.AppViewModel
 import com.bento.calendar.ui.Arm
 import com.bento.calendar.ui.Fmt
 import com.bento.calendar.ui.components.BentoDateField
+import com.bento.calendar.ui.components.BentoSelectField
 import com.bento.calendar.ui.components.BentoSheet
 import com.bento.calendar.ui.components.BentoTextField
 import com.bento.calendar.ui.components.CategoryPills
@@ -118,10 +120,32 @@ fun TaskEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
         Column(Modifier.padding(top = 15.dp)) {
             FieldLabel("Category")
             CategoryPills(
+                categories = data.categories,
                 selected = d.cat,
                 onSelect = { v -> vm.updateTaskDraft { it.copy(cat = v) } },
                 includeNone = true,
             )
+        }
+        Column(Modifier.padding(top = 15.dp)) {
+            FieldLabel("Repeat")
+            BentoSelectField(
+                value = d.recur,
+                options = listOf(
+                    "Doesn't repeat" to Recur.NONE,
+                    "Daily" to Recur.DAILY,
+                    "Weekly" to Recur.WEEKLY,
+                    "Monthly" to Recur.MONTHLY,
+                ),
+                onSelect = { v -> vm.updateTaskDraft { it.copy(recur = v) } },
+            )
+            if (d.recur != Recur.NONE && d.due == null) {
+                Text(
+                    "Repeats from today when completed",
+                    fontSize = 11.sp,
+                    color = c.faint,
+                    modifier = Modifier.padding(start = 2.dp, end = 2.dp, top = 7.dp),
+                )
+            }
         }
         PrimaryButton("Save task", onClick = vm::saveTask)
         if (d.id != null) {

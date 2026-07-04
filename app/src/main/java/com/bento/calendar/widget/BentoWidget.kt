@@ -37,6 +37,7 @@ import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
 import com.bento.calendar.MainActivity
 import com.bento.calendar.data.AppGraph
+import com.bento.calendar.data.Category
 import com.bento.calendar.data.Cats
 import com.bento.calendar.data.EventItem
 import com.bento.calendar.data.occurrencesOn
@@ -87,6 +88,7 @@ class BentoWidget : GlanceAppWidget() {
                 context = context,
                 today = today,
                 events = occurrencesOn(data.events, today),
+                categories = data.categories,
                 openTasks = data.tasks.count { !it.done },
                 use24h = data.prefs.use24h,
                 c = c,
@@ -101,6 +103,7 @@ private fun WidgetBody(
     context: Context,
     today: LocalDate,
     events: List<EventItem>,
+    categories: List<Category>,
     openTasks: Int,
     use24h: Boolean,
     c: BentoColors,
@@ -147,12 +150,26 @@ private fun WidgetBody(
         Spacer(GlanceModifier.height(8.dp))
 
         if (events.isEmpty()) {
-            Text(
-                "Nothing scheduled",
-                style = TextStyle(color = ColorProvider(c.faint), fontSize = 11.sp),
-            )
+            Box(
+                modifier = GlanceModifier.fillMaxWidth().defaultWeight(),
+                contentAlignment = Alignment.Center,
+            ) {
+                WidgetEmptyState(
+                    iconRes = com.bento.calendar.R.drawable.widget_empty_sun,
+                    line = "Nothing scheduled",
+                    hint = "Enjoy the day — or tap + to plan one",
+                    c = c,
+                )
+            }
         } else {
-            events.take(shown).forEach { EventRow(it, use24h, c) }
+            events.take(shown).forEach { e ->
+                // Same fallback chain as AppData.categoryOf: orphaned ids from
+                // deleted categories never crash the widget.
+                val cat = categories.firstOrNull { it.id == e.cat }
+                    ?: categories.firstOrNull()
+                    ?: Cats.DEFAULTS[0]
+                EventRow(e, hexColor(cat.colorHex), use24h, c)
+            }
             if (events.size > shown) {
                 Text(
                     "+${events.size - shown} more",
@@ -173,7 +190,7 @@ private fun WidgetBody(
 }
 
 @Composable
-private fun EventRow(e: EventItem, use24h: Boolean, c: BentoColors) {
+private fun EventRow(e: EventItem, dotColor: Color, use24h: Boolean, c: BentoColors) {
     Row(
         modifier = GlanceModifier.fillMaxWidth().padding(vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -188,7 +205,7 @@ private fun EventRow(e: EventItem, use24h: Boolean, c: BentoColors) {
             modifier = GlanceModifier
                 .size(6.dp)
                 .cornerRadius(3.dp)
-                .background(ColorProvider(catColor(e.cat))),
+                .background(ColorProvider(dotColor)),
         ) {}
         Spacer(GlanceModifier.width(6.dp))
         Text(

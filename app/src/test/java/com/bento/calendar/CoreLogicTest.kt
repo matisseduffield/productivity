@@ -172,6 +172,88 @@ class DeriveTest {
     }
 }
 
+class ExceptionDatesTest {
+    private fun weekly(date: String, ex: List<String> = emptyList()) =
+        EventItem(id = "e", title = "t", date = date, start = "09:00", end = "10:00",
+            recur = Recur.WEEKLY, exDates = ex)
+
+    @Test
+    fun `excluded occurrence is skipped, series continues`() {
+        val e = weekly("2026-07-02", ex = listOf("2026-07-09"))
+        assertTrue(e.occursOn(LocalDate.parse("2026-07-02")))
+        assertFalse(e.occursOn(LocalDate.parse("2026-07-09")))
+        assertTrue(e.occursOn(LocalDate.parse("2026-07-16")))
+    }
+
+    @Test
+    fun `exDates ignored for non-recurring events`() {
+        val e = EventItem(id = "e", title = "t", date = "2026-07-02",
+            start = "09:00", end = "10:00", exDates = listOf("2026-07-02"))
+        assertTrue(e.occursOn(LocalDate.parse("2026-07-02")))
+    }
+}
+
+class RecurringTaskTest {
+    private val today = LocalDate.parse("2026-07-02")
+
+    private fun data(vararg tasks: TaskItem) = com.bento.calendar.data.AppData(tasks = tasks.toList())
+
+    @Test
+    fun `plain task toggles done`() {
+        val d = data(TaskItem(id = "a", title = "a"))
+        val out = com.bento.calendar.data.completeTask(d, "a", today)
+        assertTrue(out.tasks[0].done)
+        assertFalse(com.bento.calendar.data.completeTask(out, "a", today).tasks[0].done)
+    }
+
+    @Test
+    fun `weekly task advances a week and stays open`() {
+        val d = data(TaskItem(id = "a", title = "a", due = "2026-07-02", recur = Recur.WEEKLY))
+        val out = com.bento.calendar.data.completeTask(d, "a", today)
+        assertFalse(out.tasks[0].done)
+        assertEquals("2026-07-09", out.tasks[0].due)
+    }
+
+    @Test
+    fun `overdue recurring task anchors to today`() {
+        val d = data(TaskItem(id = "a", title = "a", due = "2026-06-20", recur = Recur.DAILY))
+        val out = com.bento.calendar.data.completeTask(d, "a", today)
+        assertEquals("2026-07-03", out.tasks[0].due)
+    }
+
+    @Test
+    fun `recurring task with no due anchors to today`() {
+        val d = data(TaskItem(id = "a", title = "a", recur = Recur.MONTHLY))
+        val out = com.bento.calendar.data.completeTask(d, "a", today)
+        assertEquals("2026-08-02", out.tasks[0].due)
+    }
+
+    @Test
+    fun `completing a DONE recurring task just un-completes it`() {
+        val d = data(TaskItem(id = "a", title = "a", done = true, recur = Recur.WEEKLY, due = "2026-07-02"))
+        val out = com.bento.calendar.data.completeTask(d, "a", today)
+        assertFalse(out.tasks[0].done)
+        assertEquals("2026-07-02", out.tasks[0].due)
+    }
+}
+
+class CategoryLookupTest {
+    @Test
+    fun `categoryOf falls back safely`() {
+        val custom = com.bento.calendar.data.Category("x", "Custom", "#112233")
+        val d = com.bento.calendar.data.AppData(categories = listOf(custom))
+        assertEquals("Custom", d.categoryOf("x").label)
+        assertEquals("Custom", d.categoryOf("deleted-id").label)
+    }
+
+    @Test
+    fun `defaults present when unspecified`() {
+        val d = com.bento.calendar.data.AppData()
+        assertEquals(4, d.categories.size)
+        assertEquals("Work", d.categoryOf("work").label)
+    }
+}
+
 class UpdateVersionTest {
     private fun newer(a: String, b: String) = com.bento.calendar.updates.UpdateManager.isNewer(a, b)
 

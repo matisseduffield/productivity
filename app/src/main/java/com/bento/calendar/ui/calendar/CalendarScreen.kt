@@ -57,6 +57,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -73,15 +74,17 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.bento.calendar.data.AppData
-import com.bento.calendar.data.Cats
+import com.bento.calendar.data.DeviceEvent
 import com.bento.calendar.data.EventItem
 import com.bento.calendar.data.Recur
 import com.bento.calendar.data.minsToHm
 import com.bento.calendar.data.occurrencesOn
+import com.bento.calendar.data.toIso
 import com.bento.calendar.data.toMins
 import com.bento.calendar.ui.AppViewModel
 import com.bento.calendar.ui.CalView
 import com.bento.calendar.ui.Fmt
+import com.bento.calendar.ui.components.BentoSheet
 import com.bento.calendar.ui.components.Dot
 import com.bento.calendar.ui.components.EmptyText
 import com.bento.calendar.ui.components.GBtn
@@ -94,6 +97,7 @@ import com.bento.calendar.ui.theme.BentoIcons
 import com.bento.calendar.ui.theme.LocalBento
 import com.bento.calendar.ui.theme.OnCategory
 import com.bento.calendar.ui.theme.color
+import com.bento.calendar.ui.theme.hexColor
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.YearMonth
@@ -112,6 +116,24 @@ private data class CalTarget(val view: CalView, val periodStart: LocalDate)
 
 @Composable
 fun CalendarScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
+    // Read-only device-calendar overlay: tapping a device event opens a
+    // details sheet (device events have no editor, delete or drag).
+    var deviceSheet by remember { mutableStateOf<DeviceEvent?>(null) }
+    Box(Modifier.fillMaxSize()) {
+        CalendarBody(vm, data, now, onDeviceTap = { deviceSheet = it })
+        deviceSheet?.let { ev ->
+            DeviceEventSheet(ev, data.prefs.use24h, onDismiss = { deviceSheet = null })
+        }
+    }
+}
+
+@Composable
+private fun CalendarBody(
+    vm: AppViewModel,
+    data: AppData,
+    now: LocalDateTime,
+    onDeviceTap: (DeviceEvent) -> Unit,
+) {
     val scrollState = rememberScrollState()
     val density = LocalDensity.current
 
@@ -194,9 +216,9 @@ fun CalendarScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 // Day selection reads live vm state — same target, no animation.
                 Column(Modifier.fillMaxWidth()) {
                     when (target.view) {
-                        CalView.Month -> MonthView(vm, data, now, YearMonth.from(target.periodStart), vm.selDate)
-                        CalView.Week -> WeekView(vm, data, now, target.periodStart)
-                        CalView.Day -> DayView(vm, data, now, target.periodStart)
+                        CalView.Month -> MonthView(vm, data, now, YearMonth.from(target.periodStart), vm.selDate, onDeviceTap)
+                        CalView.Week -> WeekView(vm, data, now, target.periodStart, onDeviceTap)
+                        CalView.Day -> DayView(vm, data, now, target.periodStart, onDeviceTap)
                     }
                 }
             }
@@ -342,6 +364,28 @@ private fun SegButton(label: String, active: Boolean, modifier: Modifier, onClic
 
 // ---- Shared pieces ----
 
+/**
+ * One row/block in a merged Bento + device-calendar list: exactly one of
+ * [bento] / [device] is set. [startMin]/[endMin] carry the minutes the layout
+ * works with — clamped to the visible grid in Week/Day view, raw in the
+ * Month agenda (where they only drive the interleave order).
+ */
+private data class GridBlock(
+    val bento: EventItem?,
+    val device: DeviceEvent?,
+    val startMin: Int,
+    val endMin: Int,
+)
+
+/**
+ * The read-only device-event fill: the calendar color at 28% over the tile —
+ * clearly tinted next to the solid Bento category blocks. Pairs with a solid
+ * 3dp leading rail in the full color and c.tx text.
+ */
+@Composable
+private fun deviceTint(color: Color): Color =
+    color.copy(alpha = 0.28f).compositeOver(LocalBento.current.tile)
+
 /** Day-number pill: today = accent/white, selected (week header) = tile bg + 1dp inset border. */
 @Composable
 private fun DayNumberPill(day: Int, isToday: Boolean, isSelected: Boolean) {
@@ -414,6 +458,7 @@ private fun MonthView(
     now: LocalDateTime,
     cursor: YearMonth,
     selDate: LocalDate,
+    onDeviceTap: (DeviceEvent) -> Unit,
 ) {
     val c = LocalBento.current
     val today = now.toLocalDate()
@@ -445,20 +490,35 @@ private fun MonthView(
             }
         }
     }
-    // Agenda for the selected day.
+    // Agenda for the selected day: Bento occurrences + read-only device events
+    // interleaved by start time. Both source lists are start-sorted and
+    // sortedBy is stable, so Bento rows keep their existing relative order
+    // (and the list is untouched when the device overlay is off).
     val selEvs = occurrencesOn(data.events, selDate)
+    val selDev = vm.deviceEvents[selDate.toIso()].orEmpty()
+    val agenda = (selEvs.map { GridBlock(it, null, it.start.toMins(), it.end.toMins()) } +
+        selDev.map { GridBlock(null, it, it.start.toMins(), it.end.toMins()) })
+        .sortedBy { it.startMin }
     SectionLabel(
         Fmt.dayShort(selDate),
         count = when {
-            selEvs.isEmpty() -> "no events"
-            selEvs.size == 1 -> "1 event"
-            else -> "${selEvs.size} events"
+            agenda.isEmpty() -> "no events"
+            agenda.size == 1 -> "1 event"
+            else -> "${agenda.size} events"
         },
     )
-    if (selEvs.isEmpty()) {
+    if (agenda.isEmpty()) {
         EmptyText("Nothing scheduled — tap + to add an event.")
     } else {
-        selEvs.forEach { e -> AgendaRow(vm, data, e) }
+        agenda.forEach { b ->
+            val e = b.bento
+            if (e != null) {
+                AgendaRow(vm, data, e)
+            } else {
+                val dev = b.device!!
+                DeviceAgendaRow(data, dev, onTap = { onDeviceTap(dev) })
+            }
+        }
     }
 }
 
@@ -477,7 +537,13 @@ private fun MonthCell(
     val inMonth = YearMonth.from(date) == cursor
     val selected = date == selDate
     val shape = RoundedCornerShape(13.dp)
-    val cats = occurrencesOn(data.events, date).map { Cats.of(it.cat) }.distinct().take(3)
+    // Up-to-3 dots: Bento category colors first, then device-calendar colors
+    // that don't duplicate one already shown. Identical to the pre-overlay
+    // dots whenever deviceEvents has nothing for this date.
+    val catColors = occurrencesOn(data.events, date).map { data.categoryOf(it.cat) }.distinct().map { it.color }
+    val devColors = vm.deviceEvents[date.toIso()].orEmpty()
+        .map { hexColor(it.colorHex) }.distinct().filterNot { it in catColors }
+    val dots = (catColors + devColors).take(3)
     Column(
         modifier
             .aspectRatio(0.92f)
@@ -507,7 +573,7 @@ private fun MonthCell(
             horizontalArrangement = Arrangement.spacedBy(3.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            cats.forEach { Dot(it.color, size = 4.dp) }
+            dots.forEach { Dot(it, size = 4.dp) }
         }
     }
 }
@@ -550,7 +616,7 @@ private fun AgendaRow(vm: AppViewModel, data: AppData, e: EventItem) {
             Modifier
                 .width(3.dp)
                 .fillMaxHeight()
-                .background(Cats.of(e.cat).color, CircleShape),
+                .background(data.categoryOf(e.cat).color, CircleShape),
         )
         Column(Modifier.weight(1f)) {
             Text(e.title, fontSize = 14.sp, fontWeight = FontWeight.W600, color = c.tx)
@@ -564,6 +630,58 @@ private fun AgendaRow(vm: AppViewModel, data: AppData, e: EventItem) {
     }
 }
 
+/**
+ * Month-agenda row for a read-only device event: same layout as [AgendaRow]
+ * (time column, 3dp rail, title + meta) with the tinted device treatment and
+ * the calendar name in the meta line. Tap opens the details sheet — there is
+ * no editor for device events.
+ */
+@Composable
+private fun DeviceAgendaRow(data: AppData, e: DeviceEvent, onTap: () -> Unit) {
+    val c = LocalBento.current
+    val devColor = hexColor(e.colorHex)
+    val meta = buildString {
+        if (!e.allDay && e.end.toMins() > e.start.toMins()) append(Fmt.duration(e.start, e.end))
+        if (isNotEmpty()) append(" · ")
+        append(e.calName)
+        if (e.loc.isNotEmpty()) {
+            append(" · ")
+            append(e.loc)
+        }
+    }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 3.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(deviceTint(devColor))
+            .tap(onClick = onTap)
+            .padding(horizontal = 8.dp, vertical = 10.dp)
+            .height(IntrinsicSize.Min),
+        horizontalArrangement = Arrangement.spacedBy(11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            if (e.allDay) "All day" else Fmt.time(e.start, data.prefs.use24h),
+            fontSize = 11.5.sp,
+            fontWeight = FontWeight.W600,
+            color = c.sub,
+            style = LocalTextStyle.current.copy(fontFeatureSettings = "tnum"),
+            modifier = Modifier.width(44.dp),
+        )
+        Box(
+            Modifier
+                .width(3.dp)
+                .fillMaxHeight()
+                .background(devColor, CircleShape),
+        )
+        Column(Modifier.weight(1f)) {
+            Text(e.title, fontSize = 14.sp, fontWeight = FontWeight.W600, color = c.tx)
+            Text(meta, fontSize = 11.5.sp, color = c.sub, modifier = Modifier.padding(top = 2.dp))
+        }
+    }
+}
+
 // ---- Week view ----
 
 /** One folded "+N" overflow pill: [count] hidden events; [bottomMin] is the cluster's visual end in grid minutes. */
@@ -571,13 +689,20 @@ private data class WeekOverflow(val count: Int, val bottomMin: Int)
 
 /** Pre-computed layout for one Week-view day column: rendered blocks, overflow pills and all-day events. */
 private data class WeekDayLayout(
-    val blocks: List<Positioned<Triple<EventItem, Int, Int>>>,
+    val blocks: List<Positioned<GridBlock>>,
     val overflows: List<WeekOverflow>,
     val allDay: List<EventItem>,
+    val allDayDevice: List<DeviceEvent>,
 )
 
 @Composable
-private fun WeekView(vm: AppViewModel, data: AppData, now: LocalDateTime, weekStart: LocalDate) {
+private fun WeekView(
+    vm: AppViewModel,
+    data: AppData,
+    now: LocalDateTime,
+    weekStart: LocalDate,
+    onDeviceTap: (DeviceEvent) -> Unit,
+) {
     val c = LocalBento.current
     val today = now.toLocalDate()
     val nowMin = now.hour * 60 + now.minute
@@ -592,24 +717,34 @@ private fun WeekView(vm: AppViewModel, data: AppData, now: LocalDateTime, weekSt
     // start+22 min (14dp block + 2dp gap at 44dp/hour) so blocks that will
     // RENDER overlapping are laid out side by side; clusters wider than two
     // columns fold the rest into a per-cluster "+N" pill (Day view shows all).
-    val perDay = remember(data.events, weekStart) {
+    val perDay = remember(data.events, weekStart, vm.deviceEvents) {
         (0..6).map { i ->
             val date = ws.plusDays(i.toLong())
             // All-day events would render as full-day columns in the timed
             // grid — split them out here (same memo) for the strip above it.
             val occ = occurrencesOn(data.events, date)
             val allDay = occ.filter { it.allDay }
+            // Read-only device events share the overlap columns with Bento
+            // blocks so concurrent items render side by side.
+            val dev = vm.deviceEvents[date.toIso()].orEmpty()
+            val allDayDevice = dev.filter { it.allDay }
             val visible = occ.filter { !it.allDay }.mapNotNull { e ->
                 val s = maxOf(e.start.toMins(), 420)
                 val en = minOf(e.end.toMins(), 1320)
-                if (en <= 420 || s >= 1320) null else Triple(e, s, en)
+                if (en <= 420 || s >= 1320) null else GridBlock(e, null, s, en)
+            } + dev.filter { !it.allDay }.mapNotNull { e ->
+                val s = maxOf(e.start.toMins(), 420)
+                val en = minOf(e.end.toMins(), 1320)
+                // en <= s also drops multi-day fan-out days whose HH:MM range
+                // wraps midnight — they'd otherwise draw phantom blocks.
+                if (en <= s || en <= 420 || s >= 1320) null else GridBlock(null, e, s, en)
             }
-            val effEnd = { t: Triple<EventItem, Int, Int> -> maxOf(t.third, t.second + 22) }
-            val positioned = layoutOverlaps(visible, startOf = { it.second }, endOf = effEnd)
+            val effEnd = { t: GridBlock -> maxOf(t.endMin, t.startMin + 22) }
+            val positioned = layoutOverlaps(visible, startOf = { it.startMin }, endOf = effEnd)
             // Fold columns >= 2 into per-cluster "+N" pills. The positioned
             // list is in cluster order, so boundaries are re-detected with the
             // same rule layoutOverlaps uses (start >= running max effective end).
-            val blocks = ArrayList<Positioned<Triple<EventItem, Int, Int>>>()
+            val blocks = ArrayList<Positioned<GridBlock>>()
             val overflows = ArrayList<WeekOverflow>()
             var clusterMaxEnd = Int.MIN_VALUE
             var folded = 0
@@ -618,7 +753,7 @@ private fun WeekView(vm: AppViewModel, data: AppData, now: LocalDateTime, weekSt
                 folded = 0
             }
             for (p in positioned) {
-                if (clusterMaxEnd != Int.MIN_VALUE && p.item.second >= clusterMaxEnd) {
+                if (clusterMaxEnd != Int.MIN_VALUE && p.item.startMin >= clusterMaxEnd) {
                     flush()
                     clusterMaxEnd = Int.MIN_VALUE
                 }
@@ -626,7 +761,7 @@ private fun WeekView(vm: AppViewModel, data: AppData, now: LocalDateTime, weekSt
                 if (p.col >= 2) folded++ else blocks.add(p)
             }
             flush()
-            WeekDayLayout(blocks, overflows, allDay)
+            WeekDayLayout(blocks, overflows, allDay, allDayDevice)
         }
     }
 
@@ -655,8 +790,9 @@ private fun WeekView(vm: AppViewModel, data: AppData, now: LocalDateTime, weekSt
 
     // All-day strip: a thin category-colored bar per all-day event (max 2)
     // above each day column — the columns are too narrow for text; tapping a
-    // day's bars opens that date's Day view where the full pills live.
-    if (perDay.any { it.allDay.isNotEmpty() }) {
+    // day's bars opens that date's Day view where the full pills live. Device
+    // all-day events join in their calendar color, after the Bento bars.
+    if (perDay.any { it.allDay.isNotEmpty() || it.allDayDevice.isNotEmpty() }) {
         Row(Modifier.fillMaxWidth().padding(top = 6.dp, start = 34.dp)) {
             for (i in 0..6) {
                 val date = ws.plusDays(i.toLong())
@@ -670,12 +806,14 @@ private fun WeekView(vm: AppViewModel, data: AppData, now: LocalDateTime, weekSt
                         },
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
-                    perDay[i].allDay.take(2).forEach { e ->
+                    val bars = (perDay[i].allDay.map { data.categoryOf(it.cat).color } +
+                        perDay[i].allDayDevice.map { hexColor(it.colorHex) }).take(2)
+                    bars.forEach { barColor ->
                         Box(
                             Modifier
                                 .fillMaxWidth()
                                 .height(4.dp)
-                                .background(Cats.of(e.cat).color, RoundedCornerShape(2.dp)),
+                                .background(barColor, RoundedCornerShape(2.dp)),
                         )
                     }
                 }
@@ -726,32 +864,69 @@ private fun WeekView(vm: AppViewModel, data: AppData, now: LocalDateTime, weekSt
                 val dayX = colW * i
                 val inner = colW - 4.dp
                 dayLayout.blocks.forEach { p ->
-                    val (e, s, en) = p.item
+                    val s = p.item.startMin
+                    val en = p.item.endMin
                     val cols = minOf(p.cols, 2)
                     val slice = inner / cols
                     // Height first, then clamp y so min-height blocks near the
                     // grid end stay inside the 660dp timeline.
                     val h = maxOf((en - s) / 60f * 44f - 2f, 14f)
                     val y = minOf((s - 420) / 60f * 44f, 660f - h)
-                    Box(
-                        Modifier
-                            .offset(x = dayX + 2.dp + slice * p.col, y = y.dp)
-                            .width((slice - (if (p.col < cols - 1) 2.dp else 0.dp)).coerceAtLeast(6.dp))
-                            .height(h.dp)
-                            .clip(RoundedCornerShape(7.dp))
-                            .background(Cats.of(e.cat).color)
-                            .tap { vm.openEvent(e) }
-                            .padding(horizontal = if (slice < 20.dp) 2.dp else 5.dp, vertical = 3.dp),
-                    ) {
-                        Text(
-                            e.title,
-                            fontSize = 8.5.sp,
-                            fontWeight = FontWeight.W700,
-                            color = OnCategory,
-                            lineHeight = 1.25.em,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                    val blockX = dayX + 2.dp + slice * p.col
+                    val blockW = (slice - (if (p.col < cols - 1) 2.dp else 0.dp)).coerceAtLeast(6.dp)
+                    val e = p.item.bento
+                    if (e != null) {
+                        Box(
+                            Modifier
+                                .offset(x = blockX, y = y.dp)
+                                .width(blockW)
+                                .height(h.dp)
+                                .clip(RoundedCornerShape(7.dp))
+                                .background(data.categoryOf(e.cat).color)
+                                .tap { vm.openEvent(e) }
+                                .padding(horizontal = if (slice < 20.dp) 2.dp else 5.dp, vertical = 3.dp),
+                        ) {
+                            Text(
+                                e.title,
+                                fontSize = 8.5.sp,
+                                fontWeight = FontWeight.W700,
+                                color = OnCategory,
+                                lineHeight = 1.25.em,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    } else {
+                        // Read-only device block: tinted fill + solid leading
+                        // rail, c.tx text; tap shows the details sheet.
+                        val dev = p.item.device!!
+                        val devColor = hexColor(dev.colorHex)
+                        Row(
+                            Modifier
+                                .offset(x = blockX, y = y.dp)
+                                .width(blockW)
+                                .height(h.dp)
+                                .clip(RoundedCornerShape(7.dp))
+                                .background(deviceTint(devColor))
+                                .tap { onDeviceTap(dev) },
+                        ) {
+                            Box(Modifier.width(3.dp).fillMaxHeight().background(devColor))
+                            Text(
+                                dev.title,
+                                fontSize = 8.5.sp,
+                                fontWeight = FontWeight.W700,
+                                color = c.tx,
+                                lineHeight = 1.25.em,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(
+                                        horizontal = if (slice < 20.dp) 1.dp else 4.dp,
+                                        vertical = 3.dp,
+                                    ),
+                            )
+                        }
                     }
                 }
                 dayLayout.overflows.forEach { o ->
@@ -793,7 +968,13 @@ private fun WeekView(vm: AppViewModel, data: AppData, now: LocalDateTime, weekSt
 // ---- Day view ----
 
 @Composable
-private fun DayView(vm: AppViewModel, data: AppData, now: LocalDateTime, selDate: LocalDate) {
+private fun DayView(
+    vm: AppViewModel,
+    data: AppData,
+    now: LocalDateTime,
+    selDate: LocalDate,
+    onDeviceTap: (DeviceEvent) -> Unit,
+) {
     val c = LocalBento.current
     val today = now.toLocalDate()
     val nowMin = now.hour * 60 + now.minute
@@ -805,18 +986,28 @@ private fun DayView(vm: AppViewModel, data: AppData, now: LocalDateTime, selDate
     // layout (they'd render as full-day columns) and feed the pill strip
     // instead. Events shorter than the 30dp min block height get a visually-
     // effective end of start+36 min (30dp block + 3dp gap at 56dp/hour) so
-    // blocks that will RENDER overlapping are laid out side by side.
-    val (allDayEvents, positioned) = remember(data.events, selDate) {
+    // blocks that will RENDER overlapping are laid out side by side. Read-only
+    // device events join the same overlap layout so they share columns.
+    val (allDayEvents, allDayDevice, positioned) = remember(data.events, selDate, vm.deviceEvents) {
         val occ = occurrencesOn(data.events, selDate)
+        val dev = vm.deviceEvents[selDate.toIso()].orEmpty()
         val visible = occ.filter { !it.allDay }.mapNotNull { e ->
             // Skip events entirely outside the 06:00-23:00 grid — clamping
             // alone would draw phantom min-height blocks at the edges.
             if (e.end.toMins() <= 360 || e.start.toMins() >= 1380) null
-            else Triple(e, maxOf(e.start.toMins(), 360), minOf(e.end.toMins(), 1380))
+            else GridBlock(e, null, maxOf(e.start.toMins(), 360), minOf(e.end.toMins(), 1380))
+        } + dev.filter { !it.allDay }.mapNotNull { e ->
+            val s = maxOf(e.start.toMins(), 360)
+            val en = minOf(e.end.toMins(), 1380)
+            // en <= s also drops multi-day fan-out days whose HH:MM range
+            // wraps midnight — they'd otherwise draw phantom blocks.
+            if (en <= s || e.end.toMins() <= 360 || e.start.toMins() >= 1380) null
+            else GridBlock(null, e, s, en)
         }
-        Pair(
+        Triple(
             occ.filter { it.allDay },
-            layoutOverlaps(visible, startOf = { it.second }, endOf = { maxOf(it.third, it.second + 36) }),
+            dev.filter { it.allDay },
+            layoutOverlaps(visible, startOf = { it.startMin }, endOf = { maxOf(it.endMin, it.startMin + 36) }),
         )
     }
 
@@ -825,35 +1016,64 @@ private fun DayView(vm: AppViewModel, data: AppData, now: LocalDateTime, selDate
     // event stays reachable from Day view (the Week strip routes here on the
     // promise it "shows all"); tapping again collapses. The strip lives in the
     // scrollable column, so the expanded height is fine. State resets per day.
-    if (allDayEvents.isNotEmpty()) {
+    val allDayPills = allDayEvents.map { GridBlock(it, null, 0, 0) } +
+        allDayDevice.map { GridBlock(null, it, 0, 0) }
+    if (allDayPills.isNotEmpty()) {
         var allDayExpanded by remember(selDate) { mutableStateOf(false) }
         Column(
             Modifier.fillMaxWidth().padding(top = 10.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            val shown = if (allDayExpanded) allDayEvents else allDayEvents.take(3)
-            shown.forEach { e ->
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(22.dp)
-                        .clip(RoundedCornerShape(7.dp))
-                        .background(Cats.of(e.cat).color)
-                        .tap { vm.openEvent(e) }
-                        .padding(horizontal = 8.dp),
-                    contentAlignment = Alignment.CenterStart,
-                ) {
-                    Text(
-                        e.title,
-                        fontSize = 9.5.sp,
-                        fontWeight = FontWeight.W700,
-                        color = OnCategory,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+            val shown = if (allDayExpanded) allDayPills else allDayPills.take(3)
+            shown.forEach { b ->
+                val e = b.bento
+                if (e != null) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(22.dp)
+                            .clip(RoundedCornerShape(7.dp))
+                            .background(data.categoryOf(e.cat).color)
+                            .tap { vm.openEvent(e) }
+                            .padding(horizontal = 8.dp),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        Text(
+                            e.title,
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.W700,
+                            color = OnCategory,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                } else {
+                    // Read-only device pill: tinted fill + leading rail.
+                    val dev = b.device!!
+                    val devColor = hexColor(dev.colorHex)
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(22.dp)
+                            .clip(RoundedCornerShape(7.dp))
+                            .background(deviceTint(devColor))
+                            .tap { onDeviceTap(dev) },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(Modifier.width(3.dp).fillMaxHeight().background(devColor))
+                        Text(
+                            dev.title,
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.W700,
+                            color = c.tx,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(horizontal = 5.dp),
+                        )
+                    }
                 }
             }
-            if (allDayEvents.size > 3) {
+            if (allDayPills.size > 3) {
                 Box(
                     Modifier
                         .fillMaxWidth()
@@ -866,7 +1086,7 @@ private fun DayView(vm: AppViewModel, data: AppData, now: LocalDateTime, selDate
                     contentAlignment = Alignment.CenterStart,
                 ) {
                     Text(
-                        if (allDayExpanded) "Show less" else "+${allDayEvents.size - 3} more",
+                        if (allDayExpanded) "Show less" else "+${allDayPills.size - 3} more",
                         fontSize = 9.5.sp,
                         fontWeight = FontWeight.W700,
                         color = c.sub,
@@ -910,21 +1130,39 @@ private fun DayView(vm: AppViewModel, data: AppData, now: LocalDateTime, selDate
                     },
             )
             positioned.forEach { p ->
-                val (e, s, en) = p.item
+                val s = p.item.startMin
+                val en = p.item.endMin
                 val slice = blockW / p.cols
                 // Height first, then clamp y so min-height blocks near the grid
                 // end stay inside the 952dp timeline.
                 val h = maxOf((en - s) / 60f * 56f - 3f, 30f)
                 val y = minOf((s - 360) / 60f * 56f, 952f - h)
-                DayEventBlock(
-                    vm = vm,
-                    e = e,
-                    x = 4.dp + slice * p.col,
-                    y = y,
-                    w = slice - (if (p.col < p.cols - 1) 3.dp else 0.dp),
-                    h = h,
-                    use24h = use24h,
-                )
+                val x = 4.dp + slice * p.col
+                val w = slice - (if (p.col < p.cols - 1) 3.dp else 0.dp)
+                val e = p.item.bento
+                if (e != null) {
+                    DayEventBlock(
+                        vm = vm,
+                        e = e,
+                        blockColor = data.categoryOf(e.cat).color,
+                        x = x,
+                        y = y,
+                        w = w,
+                        h = h,
+                        use24h = use24h,
+                    )
+                } else {
+                    val dev = p.item.device!!
+                    DayDeviceBlock(
+                        e = dev,
+                        x = x,
+                        y = y,
+                        w = w,
+                        h = h,
+                        use24h = use24h,
+                        onTap = { onDeviceTap(dev) },
+                    )
+                }
             }
             if (selDate == today && nowMin in 360..1380) {
                 NowLine(((nowMin - 360) / 60f * 56f).dp)
@@ -954,6 +1192,7 @@ private fun DayView(vm: AppViewModel, data: AppData, now: LocalDateTime, selDate
 private fun DayEventBlock(
     vm: AppViewModel,
     e: EventItem,
+    blockColor: Color,
     x: Dp,
     y: Float,
     w: Dp,
@@ -1021,7 +1260,7 @@ private fun DayEventBlock(
             .width(w)
             .height(h.dp)
             .clip(RoundedCornerShape(11.dp))
-            .background(Cats.of(e.cat).color)
+            .background(blockColor)
             .tap { vm.openEvent(e) }
             .pointerInput(e.id) {
                 detectDragGesturesAfterLongPress(
@@ -1088,6 +1327,90 @@ private fun DayEventBlock(
             fontWeight = FontWeight.W600,
             color = OnCategory.copy(alpha = 0.8f),
             modifier = Modifier.padding(top = 1.dp),
+        )
+    }
+}
+
+/**
+ * Read-only device-calendar block in the Day grid. Same geometry as
+ * [DayEventBlock] but deliberately a separate, simple composable: device
+ * events have no editor and no long-press drag-to-reschedule. Tinted fill
+ * over the tile with a solid 3dp leading rail; tap opens the details sheet.
+ */
+@Composable
+private fun DayDeviceBlock(
+    e: DeviceEvent,
+    x: Dp,
+    y: Float,
+    w: Dp,
+    h: Float,
+    use24h: Boolean,
+    onTap: () -> Unit,
+) {
+    val c = LocalBento.current
+    val devColor = hexColor(e.colorHex)
+    Row(
+        Modifier
+            .offset(x = x, y = y.dp)
+            .width(w)
+            .height(h.dp)
+            .clip(RoundedCornerShape(11.dp))
+            .background(deviceTint(devColor))
+            .tap(onClick = onTap),
+    ) {
+        Box(Modifier.width(3.dp).fillMaxHeight().background(devColor))
+        Column(Modifier.weight(1f).padding(start = 7.dp, end = 10.dp, top = 7.dp, bottom = 7.dp)) {
+            Text(
+                e.title,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.W700,
+                color = c.tx,
+                lineHeight = 1.3.em,
+            )
+            Text(
+                Fmt.time(e.start, use24h) + " – " + Fmt.time(e.end, use24h) + " · " + e.calName,
+                fontSize = 9.5.sp,
+                fontWeight = FontWeight.W600,
+                color = c.tx.copy(alpha = 0.8f),
+                modifier = Modifier.padding(top = 1.dp),
+            )
+        }
+    }
+}
+
+/**
+ * Details sheet for a read-only device-calendar event: title, time, source
+ * calendar (with its color dot), location — and no actions. Device events are
+ * an overlay; editing happens in the device's Calendar app.
+ */
+@Composable
+private fun DeviceEventSheet(e: DeviceEvent, use24h: Boolean, onDismiss: () -> Unit) {
+    val c = LocalBento.current
+    BentoSheet(onDismiss = onDismiss) {
+        Text(e.title, fontSize = 16.sp, fontWeight = FontWeight.W700, color = c.tx)
+        Text(
+            if (e.allDay) "All day" else Fmt.time(e.start, use24h) + " – " + Fmt.time(e.end, use24h),
+            fontSize = 12.5.sp,
+            fontWeight = FontWeight.W500,
+            color = c.sub,
+            modifier = Modifier.padding(top = 6.dp),
+        )
+        Row(
+            Modifier.padding(top = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            Dot(hexColor(e.colorHex), size = 8.dp)
+            Text(e.calName, fontSize = 12.5.sp, fontWeight = FontWeight.W600, color = c.tx)
+        }
+        if (e.loc.isNotEmpty()) {
+            Text(e.loc, fontSize = 12.5.sp, color = c.sub, modifier = Modifier.padding(top = 8.dp))
+        }
+        Text(
+            "From your device calendar — edit it in the Calendar app",
+            fontSize = 11.sp,
+            color = c.faint,
+            modifier = Modifier.padding(top = 14.dp),
         )
     }
 }

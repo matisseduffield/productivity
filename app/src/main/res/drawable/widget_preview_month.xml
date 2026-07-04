@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Picker preview mocking the month widget: title, weekday dots, number grid
+     with today highlighted and event dots. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="220dp" android:height="220dp"
+    android:viewportWidth="220" android:viewportHeight="220">
+    <path android:fillColor="#14161D"
+        android:pathData="M16,0 h188 a16,16 0 0 1 16,16 v188 a16,16 0 0 1 -16,16 H16 a16,16 0 0 1 -16,-16 V16 A16,16 0 0 1 16,0 z" />
+    <path android:fillColor="#EDEEF4" android:pathData="M14,14 h56 a4.5,4.5 0 0 1 0,9 h-56 a4.5,4.5 0 0 1 0,-9 z" />
+    <!-- weekday letters row -->
+    <path android:fillColor="#565D6E" android:pathData="M20,38 a2.5,2.5 0 1 0 5,0 a2.5,2.5 0 1 0 -5,0 z M48,38 a2.5,2.5 0 1 0 5,0 a2.5,2.5 0 1 0 -5,0 z M76,38 a2.5,2.5 0 1 0 5,0 a2.5,2.5 0 1 0 -5,0 z M104,38 a2.5,2.5 0 1 0 5,0 a2.5,2.5 0 1 0 -5,0 z M132,38 a2.5,2.5 0 1 0 5,0 a2.5,2.5 0 1 0 -5,0 z M160,38 a2.5,2.5 0 1 0 5,0 a2.5,2.5 0 1 0 -5,0 z M188,38 a2.5,2.5 0 1 0 5,0 a2.5,2.5 0 1 0 -5,0 z" />
+    <!-- number grid: faint bars; one accent "today" circle; accent event dots -->
+    <path android:fillColor="#7E8494" android:pathData="M16,56 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z M44,56 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z M72,56 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z M100,56 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z M128,56 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z M156,56 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z M184,56 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z" />
+    <path android:fillColor="#7E8494" android:pathData="M16,86 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z M44,86 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z M72,86 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z M100,86 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z M128,86 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z M156,86 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z M184,86 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z" />
+    <!-- today pill -->
+    <path android:fillColor="#8B6FE8" android:pathData="M96,110 a14,11 0 0 1 14,-8 a14,11 0 0 1 14,8 a14,11 0 0 1 -14,8 a14,11 0 0 1 -14,-8 z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M104,107 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z" />
+    <path android:fillColor="#7E8494" android:pathData="M16,116 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z M44,116 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z M72,116 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z M156,116 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z M184,116 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z" />
+    <path android:fillColor="#7E8494" android:pathData="M16,146 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z M44,146 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z M72,146 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z M100,146 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z M128,146 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z M156,146 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z M184,146 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z" />
+    <path android:fillColor="#7E8494" android:pathData="M16,176 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z M44,176 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z M72,176 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z M100,176 h12 a3,3 0 0 1 0,6 h-12 a3,3 0 0 1 0,-6 z" />
+    <!-- event dots -->
+    <path android:fillColor="#8B6FE8" android:pathData="M49,68 a2.2,2.2 0 1 0 4.4,0 a2.2,2.2 0 1 0 -4.4,0 z M133,98 a2.2,2.2 0 1 0 4.4,0 a2.2,2.2 0 1 0 -4.4,0 z M77,158 a2.2,2.2 0 1 0 4.4,0 a2.2,2.2 0 1 0 -4.4,0 z M161,128 a2.2,2.2 0 1 0 4.4,0 a2.2,2.2 0 1 0 -4.4,0 z" />
+</vector>

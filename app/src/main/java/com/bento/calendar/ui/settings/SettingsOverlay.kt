@@ -177,7 +177,6 @@ fun SettingsOverlay(
                         icon = BentoIcons.Timer,
                         title = "Event length",
                         sub = "For new events",
-                        last = true,
                     ) {
                         BentoSelectField(
                             value = prefs.durDef,
@@ -191,6 +190,71 @@ fun SettingsOverlay(
                             onSelect = { vm.setDurDef(it) },
                             compact = true,
                         )
+                    }
+                    SettingsRow(
+                        icon = BentoIcons.Droplet,
+                        title = "Categories",
+                        sub = "Add, rename, recolor",
+                        last = true,
+                    ) {
+                        TextLink("Edit", onClick = { vm.openCategories() })
+                    }
+                }
+
+                // ---- Device calendars ----
+                SectionLabel("Device calendars")
+                SettingsCard {
+                    val devEnabled = prefs.deviceCalsEnabled
+                    SettingsRow(
+                        icon = BentoIcons.SettingsCalendar,
+                        title = "Show device calendars",
+                        sub = "Read-only overlay from your Google/Samsung calendars",
+                        last = !devEnabled,
+                    ) {
+                        BentoSwitch(on = devEnabled, onToggle = { vm.setDeviceCalsEnabled(!devEnabled) })
+                    }
+                    if (devEnabled) {
+                        val cals = vm.deviceCals
+                        if (cals.isEmpty()) {
+                            Text(
+                                "No calendars found",
+                                fontSize = 11.sp,
+                                color = c.faint,
+                                modifier = Modifier.padding(vertical = 14.dp),
+                            )
+                        } else {
+                            cals.forEachIndexed { i, cal ->
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .then(
+                                            if (i == cals.lastIndex) Modifier
+                                            else Modifier.hairlineBottom(c.line),
+                                        )
+                                        .padding(vertical = 14.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                ) {
+                                    Box(
+                                        Modifier
+                                            .size(10.dp)
+                                            .background(hexColor(cal.colorHex), CircleShape),
+                                    )
+                                    Text(
+                                        cal.name,
+                                        fontSize = 13.5.sp,
+                                        fontWeight = FontWeight.W600,
+                                        color = c.tx,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    val checked =
+                                        prefs.deviceCalIds.isEmpty() || cal.id in prefs.deviceCalIds
+                                    BentoSwitch(on = checked, onToggle = { vm.toggleDeviceCal(cal.id) })
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -295,30 +359,34 @@ fun SettingsOverlay(
                 // ---- App ----
                 SectionLabel("App")
                 SettingsCard {
-                    val update = vm.updateInfo
-                    val phase = vm.updatePhase
-                    SettingsRow(
-                        icon = BentoIcons.Download,
-                        title = "App updates",
-                        sub = when {
-                            phase == AppViewModel.UpdatePhase.Downloading ->
-                                "Downloading… ${(vm.updateProgress * 100).toInt()}%"
-                            phase == AppViewModel.UpdatePhase.AwaitingConfirm ->
-                                "Waiting for install confirmation…"
-                            vm.updateError != null -> vm.updateError!!
-                            update != null -> "Version ${update.versionName} available"
-                            vm.updateChecking -> "Checking…"
-                            vm.updateUpToDate -> "You're on the latest version"
-                            else -> "Version ${BuildConfig.VERSION_NAME}"
-                        },
-                    ) {
-                        if (update != null && phase == AppViewModel.UpdatePhase.Idle) {
-                            TextLink("Update", onClick = { vm.downloadAndInstallUpdate() })
-                        } else if (phase == AppViewModel.UpdatePhase.Idle) {
-                            TextLink(
-                                if (vm.updateChecking) "…" else "Check",
-                                onClick = { vm.checkForUpdates(manual = true) },
-                            )
+                    // Sideloaded (GitHub) builds self-update in-app; Play
+                    // builds update through the store, so the row disappears.
+                    if (BuildConfig.SELF_UPDATER) {
+                        val update = vm.updateInfo
+                        val phase = vm.updatePhase
+                        SettingsRow(
+                            icon = BentoIcons.Download,
+                            title = "App updates",
+                            sub = when {
+                                phase == AppViewModel.UpdatePhase.Downloading ->
+                                    "Downloading… ${(vm.updateProgress * 100).toInt()}%"
+                                phase == AppViewModel.UpdatePhase.AwaitingConfirm ->
+                                    "Waiting for install confirmation…"
+                                vm.updateError != null -> vm.updateError!!
+                                update != null -> "Version ${update.versionName} available"
+                                vm.updateChecking -> "Checking…"
+                                vm.updateUpToDate -> "You're on the latest version"
+                                else -> "Version ${BuildConfig.VERSION_NAME}"
+                            },
+                        ) {
+                            if (update != null && phase == AppViewModel.UpdatePhase.Idle) {
+                                TextLink("Update", onClick = { vm.downloadAndInstallUpdate() })
+                            } else if (phase == AppViewModel.UpdatePhase.Idle) {
+                                TextLink(
+                                    if (vm.updateChecking) "…" else "Check",
+                                    onClick = { vm.checkForUpdates(manual = true) },
+                                )
+                            }
                         }
                     }
                     SettingsRow(

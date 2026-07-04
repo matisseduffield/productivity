@@ -31,9 +31,11 @@ import androidx.compose.ui.unit.sp
 import com.bento.calendar.data.AppData
 import com.bento.calendar.data.Recur
 import com.bento.calendar.data.minsToHm
+import com.bento.calendar.data.toDate
 import com.bento.calendar.data.toMins
 import com.bento.calendar.ui.AppViewModel
 import com.bento.calendar.ui.Arm
+import com.bento.calendar.ui.EditScope
 import com.bento.calendar.ui.Fmt
 import com.bento.calendar.ui.components.BentoDateField
 import com.bento.calendar.ui.components.BentoSelectField
@@ -61,8 +63,8 @@ private val DurationPresets = listOf(
 /**
  * Event editor bottom sheet (prototype `evOpen` sheet, markup lines 257-267,
  * logic lines 674-684): Title / Date / Starts+Ends / Category / Repeat+Reminder
- * / Location / Save / two-tap Delete. Repeating-event note when editing a
- * recurring event.
+ * / Location / Save / two-tap Delete. Editing a recurring event adds an
+ * "Apply to" scope selector (this event only vs whole series).
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -72,8 +74,23 @@ fun EventEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
     val use24h = data.prefs.use24h
     val titleFocus = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
+    // Editing an existing recurring event: expose "this event vs whole series".
+    val recurringEdit = d.id != null && d.occurrenceDate != null
+    // Series base date, read once at composition — while scope is Single the
+    // draft's date is normalized to the tapped occurrence, so switching back
+    // to Series must restore the original series date.
+    val seriesBaseDate = remember(d.id) {
+        if (recurringEdit) data.events.firstOrNull { it.id == d.id }?.date?.toDate() else null
+    }
     LaunchedEffect(Unit) {
         if (d.id == null) titleFocus.requestFocus()
+        // A Single-scope recurring edit targets the tapped occurrence, but the
+        // draft opens holding the SERIES base date — normalize so the Date
+        // field shows (and saveEvent spawns the standalone on) the tapped
+        // instance's date.
+        if (recurringEdit && d.scope == EditScope.Single && d.date != d.occurrenceDate) {
+            vm.updateEventDraft { it.copy(date = it.occurrenceDate ?: it.date) }
+        }
     }
     BentoSheet(onDismiss = vm::closeSheets) {
         Text(
@@ -202,7 +219,7 @@ fun EventEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                     verticalArrangement = Arrangement.spacedBy(7.dp),
                 ) {
                     DurationPresets.forEach { (label, mins) ->
-                        DurationPill(
+                        OptionPill(
                             label = label,
                             active = durMins > 0 && durMins == mins,
                             // A preset that would push the end past 23:59 cannot
@@ -221,6 +238,7 @@ fun EventEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
         Column(Modifier.padding(top = 15.dp)) {
             FieldLabel("Category")
             CategoryPills(
+                categories = data.categories,
                 selected = d.cat,
                 onSelect = { v -> vm.updateEventDraft { it.copy(cat = v) } },
                 includeNone = false,
@@ -232,18 +250,22 @@ fun EventEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 .padding(top = 15.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Column(Modifier.weight(1f)) {
-                FieldLabel("Repeat")
-                BentoSelectField(
-                    value = d.recur,
-                    options = listOf(
-                        "Doesn't repeat" to Recur.NONE,
-                        "Daily" to Recur.DAILY,
-                        "Weekly" to Recur.WEEKLY,
-                        "Monthly" to Recur.MONTHLY,
-                    ),
-                    onSelect = { v -> vm.updateEventDraft { it.copy(recur = v) } },
-                )
+            // Changing recurrence only makes sense for the whole series, so
+            // the Repeat field disappears while editing a single occurrence.
+            if (!(recurringEdit && d.scope == EditScope.Single)) {
+                Column(Modifier.weight(1f)) {
+                    FieldLabel("Repeat")
+                    BentoSelectField(
+                        value = d.recur,
+                        options = listOf(
+                            "Doesn't repeat" to Recur.NONE,
+                            "Daily" to Recur.DAILY,
+                            "Weekly" to Recur.WEEKLY,
+                            "Monthly" to Recur.MONTHLY,
+                        ),
+                        onSelect = { v -> vm.updateEventDraft { it.copy(recur = v) } },
+                    )
+                }
             }
             Column(Modifier.weight(1f)) {
                 FieldLabel("Reminder")
@@ -261,13 +283,55 @@ fun EventEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 )
             }
         }
-        if (d.id != null && d.recur != Recur.NONE) {
-            Text(
-                "Repeats — edits apply to every occurrence",
-                fontSize = 12.sp,
-                color = c.faint,
-                modifier = Modifier.padding(start = 2.dp, end = 2.dp, top = 8.dp),
-            )
+        if (recurringEdit) {
+            Column(Modifier.padding(top = 15.dp)) {
+                FieldLabel("Apply to")
+                Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    OptionPill(
+                        label = "This event",
+                        active = d.scope == EditScope.Single,
+                        onClick = {
+                            vm.updateEventDraft {
+                                it.copy(
+                                    scope = EditScope.Single,
+                                    // Single edits target the tapped instance.
+                                    date = it.occurrenceDate ?: it.date,
+                                )
+                            }
+                        },
+                    )
+                    OptionPill(
+                        label = "Whole series",
+                        active = d.scope == EditScope.Series,
+                        onClick = {
+                            vm.updateEventDraft {
+                                it.copy(
+                                    scope = EditScope.Series,
+                                    // Restore the series base date ONLY when the
+                                    // date is still the untouched occurrence —
+                                    // a date the user deliberately picked while
+                                    // in Single scope must never be clobbered.
+                                    date = if (it.date == it.occurrenceDate) {
+                                        seriesBaseDate ?: it.date
+                                    } else {
+                                        it.date
+                                    },
+                                )
+                            }
+                        },
+                    )
+                }
+                Text(
+                    if (d.scope == EditScope.Single) {
+                        "Changes only " + Fmt.dayShort(d.occurrenceDate ?: d.date)
+                    } else {
+                        "Changes every occurrence"
+                    },
+                    fontSize = 11.sp,
+                    color = c.faint,
+                    modifier = Modifier.padding(top = 6.dp, start = 2.dp),
+                )
+            }
         }
         Column(Modifier.padding(top = 15.dp)) {
             FieldLabel("Location")
@@ -282,16 +346,24 @@ fun EventEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
         PrimaryButton("Save event", onClick = vm::saveEvent)
         if (d.id != null) {
             DangerTextButton(
-                if (vm.isArmed(Arm.EVENT)) "Tap again to delete" else "Delete event",
+                when {
+                    vm.isArmed(Arm.EVENT) -> "Tap again to delete"
+                    recurringEdit && d.scope == EditScope.Single -> "Delete this event"
+                    recurringEdit -> "Delete series"
+                    else -> "Delete event"
+                },
                 onClick = vm::deleteEvent,
             )
         }
     }
 }
 
-/** Duration preset pill — same visual language as the category pills. */
+/**
+ * Quick-pick pill (duration presets, edit scope) — same visual language as
+ * the category pills.
+ */
 @Composable
-private fun DurationPill(
+private fun OptionPill(
     label: String,
     active: Boolean,
     enabled: Boolean = true,

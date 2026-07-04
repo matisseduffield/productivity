@@ -29,7 +29,10 @@ import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -41,17 +44,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.bento.calendar.data.AppData
-import com.bento.calendar.data.Cats
+import com.bento.calendar.data.DeviceEvent
 import com.bento.calendar.data.EventItem
 import com.bento.calendar.data.NoteItem
 import com.bento.calendar.data.TaskItem
 import com.bento.calendar.data.occurrencesOn
+import com.bento.calendar.data.toIso
 import com.bento.calendar.data.toMins
 import com.bento.calendar.ui.AppViewModel
 import com.bento.calendar.ui.Fmt
 import com.bento.calendar.ui.Tab
 import com.bento.calendar.ui.activeReminder
 import com.bento.calendar.ui.components.BentoCheckbox
+import com.bento.calendar.ui.components.BentoSheet
 import com.bento.calendar.ui.components.Dot
 import com.bento.calendar.ui.components.GBtn
 import com.bento.calendar.ui.components.tap
@@ -60,6 +65,7 @@ import com.bento.calendar.ui.startOfWeek
 import com.bento.calendar.ui.theme.BentoIcons
 import com.bento.calendar.ui.theme.LocalBento
 import com.bento.calendar.ui.theme.color
+import com.bento.calendar.ui.theme.hexColor
 import java.time.LocalDate
 import java.time.LocalDateTime
 
@@ -69,6 +75,24 @@ import java.time.LocalDateTime
  */
 @Composable
 fun TodayScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
+    // Read-only device-calendar overlay: tapping a device row opens a details
+    // sheet (device events have no editor, delete or drag).
+    var deviceSheet by remember { mutableStateOf<DeviceEvent?>(null) }
+    Box(Modifier.fillMaxSize()) {
+        TodayBody(vm, data, now, onDeviceTap = { deviceSheet = it })
+        deviceSheet?.let { ev ->
+            DeviceEventSheet(ev, data.prefs.use24h, onDismiss = { deviceSheet = null })
+        }
+    }
+}
+
+@Composable
+private fun TodayBody(
+    vm: AppViewModel,
+    data: AppData,
+    now: LocalDateTime,
+    onDeviceTap: (DeviceEvent) -> Unit,
+) {
     val c = LocalBento.current
     val today = now.toLocalDate()
     val nowMin = now.hour * 60 + now.minute
@@ -82,6 +106,9 @@ fun TodayScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
     val evT = occT.filter { !it.allDay }
     val nx = evT.firstOrNull { it.end.toMins() > nowMin }
     val openTasks = sortedOpenTasks(data.tasks, today)
+    // Device events surface ONLY in the Later-today rows — they never drive
+    // the up-next pick, the reminder banner or the This-week dots.
+    val devT = vm.deviceEvents[today.toIso()].orEmpty()
 
     Column(Modifier.fillMaxSize()) {
         // ---- Header (.ahd) ----
@@ -178,7 +205,7 @@ fun TodayScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                     .padding(top = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                UpNextTile(vm, evT, nx, nowMin, use24h, hasAllDay = allDayT.isNotEmpty())
+                UpNextTile(vm, data, evT, nx, nowMin, use24h, hasAllDay = allDayT.isNotEmpty())
 
                 Row(
                     Modifier
@@ -192,7 +219,7 @@ fun TodayScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
 
                 ThisWeekTile(vm, data, today)
 
-                LaterTodayTile(vm, evT, nx, use24h)
+                LaterTodayTile(vm, data, evT, nx, use24h, devT, nowMin, onDeviceTap)
             }
         }
     }
@@ -311,6 +338,7 @@ private fun ReminderBannerCard(
 @Composable
 private fun UpNextTile(
     vm: AppViewModel,
+    data: AppData,
     evT: List<EventItem>,
     nx: EventItem?,
     nowMin: Int,
@@ -330,7 +358,7 @@ private fun UpNextTile(
         else -> "No events today"
     }
     val meta = if (nx != null) {
-        "${Fmt.time(nx.start, use24h)} – ${Fmt.time(nx.end, use24h)} · ${Cats.of(nx.cat).label}" +
+        "${Fmt.time(nx.start, use24h)} – ${Fmt.time(nx.end, use24h)} · ${data.categoryOf(nx.cat).label}" +
             if (nx.start.toMins() > nowMin) " · ${Fmt.countdown(nx.start.toMins() - nowMin)}" else ""
     } else {
         "Tap to add an event"
@@ -494,9 +522,9 @@ private fun ThisWeekTile(vm: AppViewModel, data: AppData, today: LocalDate) {
                 val isToday = d == today
                 val catIds = LinkedHashSet<String>()
                 for (e in occurrencesOn(data.events, d)) {
-                    catIds.add(Cats.of(e.cat).id)
+                    catIds.add(data.categoryOf(e.cat).id)
                 }
-                val dots = catIds.take(3).map { Cats.of(it).color }
+                val dots = catIds.take(3).map { data.categoryOf(it).color }
                 Column(
                     Modifier
                         .weight(1f)
@@ -549,43 +577,61 @@ private fun ThisWeekTile(vm: AppViewModel, data: AppData, today: LocalDate) {
 @Composable
 private fun LaterTodayTile(
     vm: AppViewModel,
+    data: AppData,
     evT: List<EventItem>,
     nx: EventItem?,
     use24h: Boolean,
+    deviceEvents: List<DeviceEvent>,
+    nowMin: Int,
+    onDeviceTap: (DeviceEvent) -> Unit,
 ) {
     val c = LocalBento.current
     val later = if (nx != null) evT.filter { it.start.toMins() > nx.start.toMins() } else emptyList()
+    // Read-only device events join the rows on the same "later than the
+    // current pick" rule (later than now when there is no Bento pick) — they
+    // never become the pick itself. Both inputs are start-sorted and sortedBy
+    // is stable, so Bento rows are untouched when the overlay is off.
+    val cutoff = nx?.start?.toMins() ?: nowMin
+    val laterDev = deviceEvents.filter { !it.allDay && it.start.toMins() > cutoff }
+    val rows = (later.map { Pair<EventItem?, DeviceEvent?>(it, null) } +
+        laterDev.map { Pair<EventItem?, DeviceEvent?>(null, it) })
+        .sortedBy { (e, d) -> e?.start?.toMins() ?: d!!.start.toMins() }
     Tile(Modifier.fillMaxWidth()) {
         Eyebrow("LATER TODAY", c.sub)
-        if (later.isNotEmpty()) {
+        if (rows.isNotEmpty()) {
             Column(Modifier.padding(top = 7.dp)) {
-                later.forEach { e ->
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .tap { vm.openEvent(e) }
-                            .padding(vertical = 7.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Text(
-                            Fmt.time(e.start, use24h),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.W600,
-                            color = c.sub,
-                            style = LocalTextStyle.current.copy(fontFeatureSettings = "tnum"),
-                            modifier = Modifier.width(48.dp),
-                        )
-                        Text(
-                            e.title,
-                            fontSize = 13.5.sp,
-                            fontWeight = FontWeight.W500,
-                            color = c.tx,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Dot(Cats.of(e.cat).color)
+                rows.forEach { (e, d) ->
+                    if (e != null) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .tap { vm.openEvent(e) }
+                                .padding(vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Text(
+                                Fmt.time(e.start, use24h),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.W600,
+                                color = c.sub,
+                                style = LocalTextStyle.current.copy(fontFeatureSettings = "tnum"),
+                                modifier = Modifier.width(48.dp),
+                            )
+                            Text(
+                                e.title,
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.W500,
+                                color = c.tx,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Dot(data.categoryOf(e.cat).color)
+                        }
+                    } else {
+                        val dev = d!!
+                        DeviceLaterRow(dev, use24h, onTap = { onDeviceTap(dev) })
                     }
                 }
             }
@@ -597,5 +643,92 @@ private fun LaterTodayTile(
                 modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
             )
         }
+    }
+}
+
+/**
+ * Later-today row for a read-only device event: time + title with a faint
+ * calendar-name suffix, and a 6dp dot in the device-calendar color. Tap opens
+ * the details sheet — device events are not editable in Bento.
+ */
+@Composable
+private fun DeviceLaterRow(e: DeviceEvent, use24h: Boolean, onTap: () -> Unit) {
+    val c = LocalBento.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .tap(onClick = onTap)
+            .padding(vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            Fmt.time(e.start, use24h),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.W600,
+            color = c.sub,
+            style = LocalTextStyle.current.copy(fontFeatureSettings = "tnum"),
+            modifier = Modifier.width(48.dp),
+        )
+        Row(
+            Modifier.weight(1f),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                e.title,
+                fontSize = 13.5.sp,
+                fontWeight = FontWeight.W500,
+                color = c.tx,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            Text(
+                e.calName,
+                fontSize = 10.sp,
+                color = c.faint,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Dot(hexColor(e.colorHex), size = 6.dp)
+    }
+}
+
+/**
+ * Details sheet for a read-only device-calendar event: title, time, source
+ * calendar (with its color dot), location — and no actions. Device events are
+ * an overlay; editing happens in the device's Calendar app.
+ */
+@Composable
+private fun DeviceEventSheet(e: DeviceEvent, use24h: Boolean, onDismiss: () -> Unit) {
+    val c = LocalBento.current
+    BentoSheet(onDismiss = onDismiss) {
+        Text(e.title, fontSize = 16.sp, fontWeight = FontWeight.W700, color = c.tx)
+        Text(
+            if (e.allDay) "All day" else Fmt.time(e.start, use24h) + " – " + Fmt.time(e.end, use24h),
+            fontSize = 12.5.sp,
+            fontWeight = FontWeight.W500,
+            color = c.sub,
+            modifier = Modifier.padding(top = 6.dp),
+        )
+        Row(
+            Modifier.padding(top = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            Dot(hexColor(e.colorHex), size = 8.dp)
+            Text(e.calName, fontSize = 12.5.sp, fontWeight = FontWeight.W600, color = c.tx)
+        }
+        if (e.loc.isNotEmpty()) {
+            Text(e.loc, fontSize = 12.5.sp, color = c.sub, modifier = Modifier.padding(top = 8.dp))
+        }
+        Text(
+            "From your device calendar — edit it in the Calendar app",
+            fontSize = 11.sp,
+            color = c.faint,
+            modifier = Modifier.padding(top = 14.dp),
+        )
     }
 }

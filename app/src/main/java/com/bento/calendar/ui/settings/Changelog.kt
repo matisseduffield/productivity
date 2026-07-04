@@ -41,6 +41,17 @@ data class ChangelogEntry(val version: String, val date: String, val changes: Li
 
 val CHANGELOG = listOf(
     ChangelogEntry(
+        "2.0.0", "July 2026",
+        listOf(
+            "Custom categories — create, rename and recolor your own",
+            "Recurring events: edit or delete a single occurrence without touching the series",
+            "See your Google/device calendars alongside Bento events (read-only, off by default)",
+            "Repeating tasks — complete them and they come back on schedule",
+            "Widgets: real previews in the picker and friendlier empty states",
+            "Play Store-ready builds",
+        ),
+    ),
+    ChangelogEntry(
         "1.7.0", "July 2026",
         listOf(
             "Five new home-screen widgets: Up next, Tasks, Month, Quick add, and Pinned note",

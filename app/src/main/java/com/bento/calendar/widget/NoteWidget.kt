@@ -18,6 +18,7 @@ import androidx.glance.appwidget.action.actionStartActivity as actionStartActivi
 import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
+import androidx.glance.layout.Box
 import androidx.glance.layout.Column
 import androidx.glance.layout.Row
 import androidx.glance.layout.Spacer
@@ -105,10 +106,17 @@ private fun NoteBody(
         }
         Spacer(GlanceModifier.height(5.dp))
         if (note == null) {
-            Text(
-                "No notes yet — tap to write one",
-                style = TextStyle(color = ColorProvider(c.faint), fontSize = 11.sp),
-            )
+            Box(
+                modifier = GlanceModifier.fillMaxSize(),
+                contentAlignment = androidx.glance.layout.Alignment.Center,
+            ) {
+                WidgetEmptyState(
+                    iconRes = com.bento.calendar.R.drawable.widget_empty_note,
+                    line = "No notes yet",
+                    hint = "Tap to write one",
+                    c = c,
+                )
+            }
         } else {
             Text(
                 note.title.ifEmpty { "Untitled" },

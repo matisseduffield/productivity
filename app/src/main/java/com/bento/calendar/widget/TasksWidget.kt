@@ -39,6 +39,7 @@ import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
 import com.bento.calendar.data.AppGraph
 import com.bento.calendar.data.TaskItem
+import com.bento.calendar.data.completeTask
 import com.bento.calendar.ui.Fmt
 import com.bento.calendar.ui.sortedOpenTasks
 import com.bento.calendar.ui.theme.BentoColors
@@ -82,7 +83,9 @@ class TasksWidget : GlanceAppWidget() {
     }
 }
 
-/** Toggles a task's done state straight from the widget. */
+/** Toggles a task's done state straight from the widget; repeating tasks
+ *  advance to their next due date instead (same [completeTask] path as the
+ *  in-app checkbox). */
 class ToggleTaskAction : ActionCallback {
     override suspend fun onAction(
         context: Context,
@@ -92,7 +95,7 @@ class ToggleTaskAction : ActionCallback {
         val taskId = parameters[TASK_ID] ?: return
         runCatching {
             AppGraph.repository(context).update { x ->
-                x.copy(tasks = x.tasks.map { if (it.id == taskId) it.copy(done = !it.done) else it })
+                completeTask(x, taskId, LocalDate.now())
             }
             WidgetSync.pushNow(context)
         }
@@ -153,10 +156,17 @@ private fun TasksBody(
         Spacer(GlanceModifier.height(6.dp))
 
         if (tasks.isEmpty()) {
-            Text(
-                "All clear",
-                style = TextStyle(color = ColorProvider(c.faint), fontSize = 11.sp),
-            )
+            Box(
+                modifier = GlanceModifier.fillMaxWidth().defaultWeight(),
+                contentAlignment = Alignment.Center,
+            ) {
+                WidgetEmptyState(
+                    iconRes = com.bento.calendar.R.drawable.widget_empty_check,
+                    line = "All clear",
+                    hint = "Nothing left to do",
+                    c = c,
+                )
+            }
         } else {
             tasks.take(shown).forEach { TaskRow(it, today, narrow, c, accent) }
             if (tasks.size > shown) {

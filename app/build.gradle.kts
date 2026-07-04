@@ -18,8 +18,8 @@ android {
         // CI overrides these from the release tag (VERSION_NAME / VERSION_CODE
         // env) so the built APK's version always matches the tag it ships under
         // — a mismatch would make the app see itself as perpetually outdated.
-        versionCode = (System.getenv("VERSION_CODE") ?: "10700").toInt()
-        versionName = System.getenv("VERSION_NAME") ?: "1.7.0"
+        versionCode = (System.getenv("VERSION_CODE") ?: "20000").toInt()
+        versionName = System.getenv("VERSION_NAME") ?: "2.0.0"
     }
 
     signingConfigs {
@@ -52,6 +52,21 @@ android {
             // stability risk we don't need to take.
             isMinifyEnabled = false
             signingConfig = signingConfigs.getByName("release")
+        }
+    }
+
+    // Two distribution channels: "github" self-updates from GitHub releases;
+    // "play" ships without the self-updater (Play policy forbids apps
+    // installing APKs) and updates through the store instead.
+    flavorDimensions += "dist"
+    productFlavors {
+        create("github") {
+            dimension = "dist"
+            buildConfigField("boolean", "SELF_UPDATER", "true")
+        }
+        create("play") {
+            dimension = "dist"
+            buildConfigField("boolean", "SELF_UPDATER", "false")
         }
     }
     compileOptions {

@@ -277,6 +277,15 @@ object BentoIcons {
             strokePath("M12 4v11M7 10.5l5 5 5 -5M4.5 19.5h15", sw)
         }
     }
+
+    /** Two curved arrows chasing each other — repeating-task badge and editor
+     *  field (new, drawn in the prototype's stroke style; no source SVG). */
+    val Repeat: ImageVector by lazy {
+        icon("Repeat", 1.9f) { sw ->
+            strokePath("M4 12a8 8 0 0 1 13.6 -5.6M20 12a8 8 0 0 1 -13.6 5.6", sw)
+            strokePath("M17.6 2.6v3.8h-3.8M6.4 21.4v-3.8h3.8", sw)
+        }
+    }
 }
 
 /** Builds a 24x24 dp / 24x24 viewport [ImageVector]; [sw] is passed to the block. */

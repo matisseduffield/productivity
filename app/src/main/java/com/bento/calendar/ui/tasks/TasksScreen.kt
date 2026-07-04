@@ -32,7 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.bento.calendar.data.AppData
-import com.bento.calendar.data.Cats
+import com.bento.calendar.data.Recur
 import com.bento.calendar.data.TaskItem
 import com.bento.calendar.data.toIso
 import com.bento.calendar.ui.AppViewModel
@@ -108,6 +108,7 @@ fun TasksScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                     key(t.id) {
                         TaskRow(
                             task = t,
+                            categoryColor = if (t.cat.isNotEmpty()) data.categoryOf(t.cat).color else null,
                             todayIso = todayIso,
                             today = today,
                             showExtras = true,
@@ -157,6 +158,7 @@ fun TasksScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                         key(t.id) {
                             TaskRow(
                                 task = t,
+                                categoryColor = if (t.cat.isNotEmpty()) data.categoryOf(t.cat).color else null,
                                 todayIso = todayIso,
                                 today = today,
                                 showExtras = false,
@@ -173,14 +175,16 @@ fun TasksScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
 }
 
 /**
- * Task list row (.trow): checkbox, title, then (open rows only) category dot
- * and due chip. Done rows are struck through and faint. Wrapped in a
- * [SwipeActionRow]: swipe right to toggle done, swipe left to delete (with
- * undo via the AppRoot banner).
+ * Task list row (.trow): checkbox, title, then (open rows only) repeat badge,
+ * category dot and due chip. Done rows are struck through and faint. Wrapped
+ * in a [SwipeActionRow]: swipe right to toggle done (repeating tasks
+ * reschedule instead — the VM routes through completeTask), swipe left to
+ * delete (with undo via the AppRoot banner).
  */
 @Composable
 private fun TaskRow(
     task: TaskItem,
+    categoryColor: Color?,
     todayIso: String,
     today: LocalDate,
     showExtras: Boolean,
@@ -216,8 +220,18 @@ private fun TaskRow(
                     .tap(onClick = onOpen),
             )
             if (showExtras) {
-                if (task.cat.isNotEmpty()) {
-                    Dot(Cats.of(task.cat).color)
+                if (task.recur != Recur.NONE) {
+                    // Repeating-task badge: completing it reschedules instead
+                    // of marking done.
+                    Icon(
+                        BentoIcons.Repeat,
+                        null,
+                        tint = c.faint,
+                        modifier = Modifier.size(12.dp),
+                    )
+                }
+                if (categoryColor != null) {
+                    Dot(categoryColor)
                 }
                 val due = task.due
                 if (due != null && !task.done) {

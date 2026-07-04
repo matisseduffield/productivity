@@ -66,6 +66,8 @@ class UpNextWidget : GlanceAppWidget() {
             UpNextBody(
                 context = context,
                 next = next,
+                // Dot only renders when next != null; Transparent is inert.
+                dotColor = next?.let { catColor(data, it.cat) } ?: Color.Transparent,
                 nowMin = nowMin,
                 use24h = data.prefs.use24h,
                 c = paletteOf(data),
@@ -79,6 +81,7 @@ class UpNextWidget : GlanceAppWidget() {
 private fun UpNextBody(
     context: Context,
     next: EventItem?,
+    dotColor: Color,
     nowMin: Int,
     use24h: Boolean,
     c: BentoColors,
@@ -106,10 +109,11 @@ private fun UpNextBody(
             Spacer(GlanceModifier.height(4.dp))
         }
         if (next == null) {
-            Text(
-                "All clear today",
-                style = TextStyle(color = ColorProvider(c.sub), fontSize = 12.sp),
-                maxLines = 1,
+            WidgetEmptyState(
+                iconRes = com.bento.calendar.R.drawable.widget_empty_sun,
+                line = "All clear today",
+                c = c,
+                compact = !tall,
             )
         } else {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -117,7 +121,7 @@ private fun UpNextBody(
                     modifier = GlanceModifier
                         .size(7.dp)
                         .cornerRadius(4.dp)
-                        .background(ColorProvider(catColor(next.cat))),
+                        .background(ColorProvider(dotColor)),
                 ) {}
                 Spacer(GlanceModifier.width(7.dp))
                 Text(

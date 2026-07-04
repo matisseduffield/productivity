@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Picker preview mocking the up-next widget: eyebrow, dot + title, time. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="180dp" android:height="80dp"
+    android:viewportWidth="180" android:viewportHeight="80">
+    <path android:fillColor="#14161D"
+        android:pathData="M16,0 h148 a16,16 0 0 1 16,16 v48 a16,16 0 0 1 -16,16 H16 a16,16 0 0 1 -16,-16 V16 A16,16 0 0 1 16,0 z" />
+    <path android:fillColor="#8B6FE8" android:pathData="M14,14 h34 a3,3 0 0 1 0,6 h-34 a3,3 0 0 1 0,-6 z" />
+    <path android:fillColor="#7BA7F7" android:pathData="M14,32 a4,4 0 1 0 8,0 a4,4 0 1 0 -8,0 z m4,3.6" />
+    <path android:fillColor="#EDEEF4" android:pathData="M28,31 h92 a4.5,4.5 0 0 1 0,9 h-92 a4.5,4.5 0 0 1 0,-9 z" />
+    <path android:fillColor="#7E8494" android:pathData="M14,52 h64 a3.5,3.5 0 0 1 0,7 h-64 a3.5,3.5 0 0 1 0,-7 z" />
+</vector>

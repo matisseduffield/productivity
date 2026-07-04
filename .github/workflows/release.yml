@@ -50,31 +50,37 @@ jobs:
           fi
 
       - name: Run unit tests
-        run: ./gradlew :app:testReleaseUnitTest
+        run: ./gradlew :app:testGithubReleaseUnitTest
 
-      - name: Build signed release APK
+      - name: Build signed artifacts (GitHub APK + Play AAB)
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: ./gradlew :app:assembleRelease
+        run: ./gradlew :app:assembleGithubRelease :app:bundlePlayRelease
 
-      - name: Name the APK
+      - name: Name the artifacts
         run: |
           VERSION="${GITHUB_REF_NAME}"
           if [[ "$GITHUB_REF" != refs/tags/* ]]; then VERSION="manual-${GITHUB_SHA::7}"; fi
-          cp app/build/outputs/apk/release/app-release.apk "BentoCalendar-${VERSION}.apk"
+          cp app/build/outputs/apk/github/release/app-github-release.apk "BentoCalendar-${VERSION}.apk"
+          cp app/build/outputs/bundle/playRelease/app-play-release.aab "BentoCalendar-${VERSION}-play.aab"
           echo "APK_NAME=BentoCalendar-${VERSION}.apk" >> "$GITHUB_ENV"
+          echo "AAB_NAME=BentoCalendar-${VERSION}-play.aab" >> "$GITHUB_ENV"
 
-      - name: Upload build artifact
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: apk
-          path: ${{ env.APK_NAME }}
+          path: |
+            ${{ env.APK_NAME }}
+            ${{ env.AAB_NAME }}
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ env.APK_NAME }}
+          files: |
+            ${{ env.APK_NAME }}
+            ${{ env.AAB_NAME }}
           generate_release_notes: true

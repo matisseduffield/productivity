@@ -111,6 +111,7 @@ fun AppRoot(
             if (vm.openNoteId != null) NoteEditorOverlay(vm, d, now)
             if (vm.settingsOpen) SettingsOverlay(vm, d, now, onExport = onExport, onImport = onImport)
             if (vm.changelogOpen) com.bento.calendar.ui.settings.ChangelogOverlay(vm)
+            if (vm.categoriesOpen) com.bento.calendar.ui.settings.CategoriesOverlay(vm, d)
             if (vm.searchOpen) SearchOverlay(vm, d, now)
             if (vm.fabOpen) CreateSheet(vm)
             if (vm.evDraft != null) EventEditorSheet(vm, d, now)

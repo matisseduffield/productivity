@@ -10,8 +10,13 @@ import androidx.lifecycle.viewModelScope
 import com.bento.calendar.data.Accents
 import com.bento.calendar.data.AppData
 import com.bento.calendar.data.AppGraph
+import com.bento.calendar.data.Category
 import com.bento.calendar.data.Cats
+import com.bento.calendar.data.DeviceCal
+import com.bento.calendar.data.DeviceCalendars
+import com.bento.calendar.data.DeviceEvent
 import com.bento.calendar.data.EventItem
+import com.bento.calendar.data.completeTask
 import com.bento.calendar.data.NoteItem
 import com.bento.calendar.data.Prefs
 import com.bento.calendar.data.Recur
@@ -45,6 +50,9 @@ import kotlin.math.min
 enum class Tab { Today, Calendar, Notes, Tasks }
 enum class CalView { Month, Week, Day }
 
+/** Scope of an edit/delete on a recurring event. */
+enum class EditScope { Single, Series }
+
 data class EventDraft(
     val id: String?,
     val title: String = "",
@@ -56,6 +64,10 @@ data class EventDraft(
     val remind: Int? = 10,
     val loc: String = "",
     val allDay: Boolean = false,
+    /** The tapped instance date when editing a recurring event. */
+    val occurrenceDate: LocalDate? = null,
+    /** "This event only" vs "whole series" for recurring edits/deletes. */
+    val scope: EditScope = EditScope.Single,
 )
 
 data class TaskDraft(
@@ -63,6 +75,7 @@ data class TaskDraft(
     val title: String = "",
     val due: LocalDate? = null,
     val cat: String = "",
+    val recur: String = Recur.NONE,
 )
 
 enum class PinMode { Set, Enter }
@@ -186,6 +199,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun refreshNow() {
         _now.value = LocalDateTime.now()
+        // Resume also re-syncs the device-calendar overlay (edits made in the
+        // Calendar app while Bento was backgrounded).
+        if (data.value?.prefs?.deviceCalsEnabled == true) refreshDeviceCalendarData()
     }
 
     private fun prefs(): Prefs = data.value?.prefs ?: Prefs()
@@ -254,6 +270,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun closeSheets() {
         settingsOpen = false
         changelogOpen = false
+        categoriesOpen = false
         fabOpen = false
         evDraft = null
         tkDraft = null
@@ -277,6 +294,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             fabOpen -> fabOpen = false
             searchOpen -> closeSearch()
             openNoteId != null -> closeNote()
+            categoriesOpen -> categoriesOpen = false
             changelogOpen -> changelogOpen = false
             settingsOpen -> settingsOpen = false
         }
@@ -284,7 +302,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun hasOverlay(): Boolean =
         pinCtx != null || evDraft != null || tkDraft != null || fabOpen ||
-            searchOpen || openNoteId != null || settingsOpen || changelogOpen
+            searchOpen || openNoteId != null || settingsOpen || changelogOpen ||
+            categoriesOpen
 
     // ---- Calendar ----
 
@@ -317,6 +336,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             CalView.Week -> selDate = selDate.minusDays(7)
             CalView.Day -> selDate = selDate.minusDays(1)
         }
+        maybeRefreshDeviceWindow()
     }
 
     fun calNext() {
@@ -327,6 +347,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             CalView.Week -> selDate = selDate.plusDays(7)
             CalView.Day -> selDate = selDate.plusDays(1)
         }
+        maybeRefreshDeviceWindow()
     }
 
     fun goToday() {
@@ -334,6 +355,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         calNavTick++
         selDate = today()
         cursor = YearMonth.from(today())
+        maybeRefreshDeviceWindow()
     }
 
     /** Month cell: tap selects, tapping the selected day opens Day view. */
@@ -361,6 +383,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         calNavTick++
         selDate = date
         cursor = YearMonth.from(date)
+        maybeRefreshDeviceWindow()
     }
 
     /** Today-tab week strip: jump to Day view of that date. */
@@ -371,6 +394,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         calViewState = CalView.Day
         selDate = date
         cursor = YearMonth.from(date)
+        maybeRefreshDeviceWindow()
     }
 
     // ---- Create menu ----
@@ -392,6 +416,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             remind = base.remind,
             loc = base.loc,
             allDay = base.allDay,
+            // For recurring events remember which instance was tapped so
+            // "this event only" edits/deletes know their target date.
+            occurrenceDate = if (base.recur != Recur.NONE) occurrence.date.toDate() else null,
+            scope = if (base.recur != Recur.NONE) EditScope.Single else EditScope.Series,
         )
         disarm(Arm.EVENT)
         searchOpen = false
@@ -464,6 +492,33 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (endM <= startM) {
             endM = min(startM + 60, 1439)
         }
+        // "This event only" on a recurring series: carve the tapped date out
+        // of the series and spawn a standalone event carrying the edits.
+        val singleOcc = d.id != null && d.scope == EditScope.Single && d.occurrenceDate != null
+        if (singleOcc) {
+            val standalone = EventItem(
+                id = newId(),
+                title = d.title.trim().ifEmpty { "Untitled" },
+                date = d.date.toIso(),
+                start = minsToHm(startM),
+                end = minsToHm(endM),
+                allDay = d.allDay,
+                cat = d.cat,
+                recur = Recur.NONE,
+                remind = d.remind,
+                loc = d.loc.trim(),
+            )
+            val exDate = d.occurrenceDate!!.toIso()
+            mut { x ->
+                x.copy(
+                    events = x.events.map {
+                        if (it.id == d.id) it.copy(exDates = it.exDates + exDate) else it
+                    } + standalone,
+                )
+            }
+            evDraft = null
+            return
+        }
         val rec = EventItem(
             id = d.id ?: newId(),
             title = d.title.trim().ifEmpty { "Untitled" },
@@ -475,6 +530,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             recur = d.recur,
             remind = d.remind,
             loc = d.loc.trim(),
+            // Series edits keep the carved-out dates unless recurrence is
+            // switched off, which turns it back into a plain one-off.
+            exDates = if (d.recur == Recur.NONE) {
+                emptyList()
+            } else {
+                data.value?.events?.firstOrNull { it.id == d.id }?.exDates ?: emptyList()
+            },
         )
         mut { x ->
             val i = x.events.indexOfFirst { it.id == rec.id }
@@ -488,9 +550,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun deleteEvent() {
-        val id = evDraft?.id ?: return
+        val d = evDraft ?: return
+        val id = d.id ?: return
         twoTap(Arm.EVENT) {
-            mut { x -> x.copy(events = x.events.filter { it.id != id }) }
+            if (d.scope == EditScope.Single && d.occurrenceDate != null) {
+                // Skip just this occurrence; the series lives on.
+                val exDate = d.occurrenceDate.toIso()
+                mut { x ->
+                    x.copy(events = x.events.map {
+                        if (it.id == id) it.copy(exDates = it.exDates + exDate) else it
+                    })
+                }
+            } else {
+                mut { x -> x.copy(events = x.events.filter { it.id != id }) }
+            }
             evDraft = null
         }
     }
@@ -513,14 +586,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---- Tasks ----
+    /** Plain tasks toggle done; repeating tasks advance to the next due date. */
     fun toggleTask(id: String) {
-        mut { x ->
-            x.copy(tasks = x.tasks.map { if (it.id == id) it.copy(done = !it.done) else it })
-        }
+        mut { completeTask(it, id, today()) }
     }
 
     fun openTask(t: TaskItem) {
-        tkDraft = TaskDraft(t.id, t.title, t.due?.toDate(), t.cat)
+        tkDraft = TaskDraft(t.id, t.title, t.due?.toDate(), t.cat, t.recur)
         disarm(Arm.TASK)
         searchOpen = false
         fabOpen = false
@@ -555,6 +627,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 done = if (i >= 0) x.tasks[i].done else false,
                 due = d.due?.toIso(),
                 cat = d.cat,
+                recur = d.recur,
             )
             if (i >= 0) {
                 x.copy(tasks = x.tasks.toMutableList().apply { set(i, rec) })
@@ -747,6 +820,148 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun removePin() {
         mut { it.copy(pin = null) }
         unlocked = emptySet()
+    }
+
+    // ---- Categories ----
+    var categoriesOpen by mutableStateOf(false)
+        private set
+
+    fun openCategories() {
+        categoriesOpen = true
+    }
+
+    fun closeCategories() {
+        categoriesOpen = false
+    }
+
+    fun addCategory(label: String, colorHex: String) {
+        val name = label.trim()
+        if (name.isEmpty()) return
+        mut { x ->
+            x.copy(categories = x.categories + Category(newId(), name, colorHex))
+        }
+    }
+
+    fun updateCategory(id: String, label: String, colorHex: String) {
+        val name = label.trim()
+        if (name.isEmpty()) return
+        mut { x ->
+            x.copy(categories = x.categories.map {
+                if (it.id == id) it.copy(label = name, colorHex = colorHex) else it
+            })
+        }
+    }
+
+    /**
+     * Deleting a category reassigns its events to the first remaining
+     * category and clears it from tasks. The last category can't be deleted.
+     */
+    fun deleteCategory(id: String) {
+        mut { x ->
+            if (x.categories.size <= 1) return@mut x
+            val remaining = x.categories.filter { it.id != id }
+            val fallback = remaining.first().id
+            x.copy(
+                categories = remaining,
+                events = x.events.map { if (it.cat == id) it.copy(cat = fallback) else it },
+                tasks = x.tasks.map { if (it.cat == id) it.copy(cat = "") else it },
+            )
+        }
+    }
+
+    // ---- Device calendar overlay ----
+    var deviceCals by mutableStateOf<List<DeviceCal>>(emptyList())
+        private set
+
+    /** Occurrence-date ISO -> device events, for the loaded window. */
+    var deviceEvents by mutableStateOf<Map<String, List<DeviceEvent>>>(emptyMap())
+        private set
+
+    /** Set by MainActivity; invoked when enabling the overlay needs the
+     *  READ_CALENDAR runtime permission. */
+    var requestCalendarPermission: (() -> Unit)? = null
+
+    fun hasCalendarOverlayEnabled(): Boolean = data.value?.prefs?.deviceCalsEnabled == true
+
+    fun setDeviceCalsEnabled(on: Boolean) {
+        if (on && !DeviceCalendars.hasPermission(getApplication())) {
+            requestCalendarPermission?.invoke()
+            return
+        }
+        mutPrefs { it.copy(deviceCalsEnabled = on) }
+        if (on) refreshDeviceCalendarData() else deviceEvents = emptyMap()
+    }
+
+    /** Called by MainActivity with the permission result. */
+    fun onCalendarPermissionResult(granted: Boolean) {
+        if (granted) {
+            mutPrefs { it.copy(deviceCalsEnabled = true) }
+            refreshDeviceCalendarData()
+        }
+    }
+
+    fun toggleDeviceCal(id: Long) {
+        val all = deviceCals.map { it.id }
+        mutPrefs { p ->
+            val current = if (p.deviceCalIds.isEmpty()) all else p.deviceCalIds
+            val next = if (id in current) current - id else current + id
+            p.copy(deviceCalIds = if (next.toSet() == all.toSet()) emptyList() else next)
+        }
+        refreshDeviceCalendarData()
+    }
+
+    /** The date range the current [deviceEvents] map covers (main-thread). */
+    private var deviceWindow: Pair<LocalDate, LocalDate>? = null
+
+    /**
+     * (Re)load the device calendar list and a generous instance window around
+     * the visible range. Called on enable, permission grant, calendar
+     * navigation past the loaded window, and resume; cheap IO queries.
+     */
+    fun refreshDeviceCalendarData() {
+        val app = getApplication<Application>()
+        // Snapshot nav state on the caller's (main) thread: the IO coroutine
+        // must not observe positions mutated after this call.
+        val anchorFrom = minOf(selDate, cursor.atDay(1))
+        val anchorTo = maxOf(selDate, cursor.atEndOfMonth())
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val pf = data.first { it != null }!!.prefs
+            if (!pf.deviceCalsEnabled || !DeviceCalendars.hasPermission(app)) {
+                // Disabled — or the permission was revoked in system settings:
+                // stale device events must not keep rendering.
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    deviceEvents = emptyMap()
+                    deviceWindow = null
+                }
+                return@launch
+            }
+            val cals = DeviceCalendars.calendars(app)
+            val from = anchorFrom.minusMonths(1)
+            val to = anchorTo.plusMonths(2)
+            val events = DeviceCalendars.eventsBetween(app, from, to, pf.deviceCalIds)
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                deviceCals = cals
+                deviceEvents = events
+                deviceWindow = from to to
+            }
+        }
+    }
+
+    /**
+     * Calendar-navigation hook: refetch when the visible range drifts within a
+     * week of the loaded window's edge (or nothing is loaded yet).
+     */
+    private fun maybeRefreshDeviceWindow() {
+        if (data.value?.prefs?.deviceCalsEnabled != true) return
+        val w = deviceWindow ?: run {
+            refreshDeviceCalendarData()
+            return
+        }
+        val lo = minOf(selDate, cursor.atDay(1))
+        val hi = maxOf(selDate, cursor.atEndOfMonth())
+        if (lo < w.first.plusDays(7) || hi > w.second.minusDays(7)) {
+            refreshDeviceCalendarData()
+        }
     }
 
     // ---- Preferences ----
@@ -1074,6 +1289,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             decoded.events.forEach { ev ->
                 ev.date.toDate()
                 require(ev.end.toMins() > ev.start.toMins())
+                ev.exDates.forEach { it.toDate() }
             }
             decoded.tasks.forEach { it.due?.toDate() }
             // A bad accent crashes BentoTheme at the root; normalize instead
@@ -1082,7 +1298,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val accent = decoded.prefs.accent
                 .takeIf { it.removePrefix("#").toLongOrNull(16) != null }
                 ?: Accents.DEFAULT
+            // Categories: blank/invalid entries fall back to the defaults so
+            // the app can always render; unknown task recur values normalize.
+            val validCats = decoded.categories.filter {
+                it.id.isNotBlank() && it.label.isNotBlank() &&
+                    it.colorHex.removePrefix("#").toLongOrNull(16) != null
+            }.ifEmpty { Cats.DEFAULTS }
+            val knownRecur = setOf(Recur.NONE, Recur.DAILY, Recur.WEEKLY, Recur.MONTHLY)
             decoded.copy(
+                categories = validCats,
+                events = decoded.events.map {
+                    if (it.recur in knownRecur) it else it.copy(recur = Recur.NONE)
+                },
+                tasks = decoded.tasks.map {
+                    if (it.recur in knownRecur) it else it.copy(recur = Recur.NONE)
+                },
                 prefs = decoded.prefs.copy(
                     accent = accent,
                     durDef = decoded.prefs.durDef.coerceAtLeast(1),

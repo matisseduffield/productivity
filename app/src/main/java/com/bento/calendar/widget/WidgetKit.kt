@@ -19,13 +19,13 @@ import androidx.glance.layout.Alignment
 import androidx.glance.layout.Box
 import androidx.glance.layout.height
 import androidx.glance.layout.padding
+import androidx.glance.layout.size
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
 import com.bento.calendar.MainActivity
 import com.bento.calendar.data.AppData
-import com.bento.calendar.data.Cats
 import com.bento.calendar.ui.theme.BentoColors
 import com.bento.calendar.ui.theme.DarkColors
 import com.bento.calendar.ui.theme.LightColors
@@ -120,12 +120,72 @@ internal fun paletteOf(data: AppData): BentoColors =
 
 internal fun accentOf(data: AppData): Color = hexColor(data.prefs.accent)
 
-internal fun catColor(cat: String): Color = hexColor(Cats.of(cat).colorHex)
+internal fun catColor(data: AppData, cat: String): Color = hexColor(data.categoryOf(cat).colorHex)
 
 internal fun launchIntent(context: Context, action: String? = null): Intent =
     Intent(context, MainActivity::class.java)
         .apply { if (action != null) setAction(action) }
         .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+/**
+ * Friendly empty state: a soft glyph above (or beside, when [compact]) calm
+ * copy, so an empty widget reads as "all done" rather than broken.
+ */
+@Composable
+internal fun WidgetEmptyState(
+    iconRes: Int,
+    line: String,
+    hint: String? = null,
+    c: BentoColors,
+    compact: Boolean = false,
+) {
+    if (compact) {
+        androidx.glance.layout.Row(
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            androidx.glance.Image(
+                provider = androidx.glance.ImageProvider(iconRes),
+                contentDescription = null,
+                colorFilter = androidx.glance.ColorFilter.tint(ColorProvider(c.faint)),
+                modifier = GlanceModifier.size(16.dp),
+            )
+            androidx.glance.layout.Spacer(GlanceModifier.size(7.dp))
+            Text(
+                line,
+                style = TextStyle(color = ColorProvider(c.sub), fontSize = 11.5.sp),
+                maxLines = 1,
+            )
+        }
+    } else {
+        androidx.glance.layout.Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            androidx.glance.Image(
+                provider = androidx.glance.ImageProvider(iconRes),
+                contentDescription = null,
+                colorFilter = androidx.glance.ColorFilter.tint(ColorProvider(c.faint)),
+                modifier = GlanceModifier.size(26.dp),
+            )
+            androidx.glance.layout.Spacer(GlanceModifier.size(6.dp))
+            Text(
+                line,
+                style = TextStyle(
+                    color = ColorProvider(c.sub),
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.Medium,
+                ),
+                maxLines = 1,
+            )
+            if (hint != null) {
+                Text(
+                    hint,
+                    style = TextStyle(color = ColorProvider(c.faint), fontSize = 10.sp),
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
 
 /** Small rounded action chip (quick add, headers). */
 @Composable

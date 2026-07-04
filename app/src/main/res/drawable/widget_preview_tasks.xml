@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Picker preview mocking the tasks widget: header + chip, checkbox rows. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="250dp" android:height="140dp"
+    android:viewportWidth="250" android:viewportHeight="140">
+    <path android:fillColor="#14161D"
+        android:pathData="M16,0 h218 a16,16 0 0 1 16,16 v108 a16,16 0 0 1 -16,16 H16 a16,16 0 0 1 -16,-16 V16 A16,16 0 0 1 16,0 z" />
+    <path android:fillColor="#EDEEF4" android:pathData="M14,14 h40 a5,5 0 0 1 0,10 h-40 a5,5 0 0 1 0,-10 z" />
+    <path android:fillColor="#7E8494" android:pathData="M62,16 h32 a3,3 0 0 1 0,6 h-32 a3,3 0 0 1 0,-6 z" />
+    <path android:fillColor="#1E212B" android:pathData="M192,10 h44 a9,9 0 0 1 0,18 h-44 a9,9 0 0 1 0,-18 z" />
+    <path android:fillColor="#8B6FE8" android:pathData="M200,16 h28 a3,3 0 0 1 0,6 h-28 a3,3 0 0 1 0,-6 z" />
+
+    <path android:fillColor="#1E212B" android:pathData="M14,42 h16 a5,5 0 0 1 5,5 v6 a5,5 0 0 1 -5,5 h-16 a5,5 0 0 1 -5,-5 v-6 a5,5 0 0 1 5,-5 z m-5,8" />
+    <path android:fillColor="#EDEEF4" android:pathData="M44,46 h104 a3.5,3.5 0 0 1 0,7 h-104 a3.5,3.5 0 0 1 0,-7 z" />
+    <path android:fillColor="#565D6E" android:pathData="M204,47 h32 a3,3 0 0 1 0,6 h-32 a3,3 0 0 1 0,-6 z" />
+
+    <path android:fillColor="#1E212B" android:pathData="M14,70 h16 a5,5 0 0 1 5,5 v6 a5,5 0 0 1 -5,5 h-16 a5,5 0 0 1 -5,-5 v-6 a5,5 0 0 1 5,-5 z m-5,8" />
+    <path android:fillColor="#EDEEF4" android:pathData="M44,74 h76 a3.5,3.5 0 0 1 0,7 h-76 a3.5,3.5 0 0 1 0,-7 z" />
+    <path android:fillColor="#F26D6D" android:pathData="M204,75 h32 a3,3 0 0 1 0,6 h-32 a3,3 0 0 1 0,-6 z" />
+
+    <path android:fillColor="#1E212B" android:pathData="M14,98 h16 a5,5 0 0 1 5,5 v6 a5,5 0 0 1 -5,5 h-16 a5,5 0 0 1 -5,-5 v-6 a5,5 0 0 1 5,-5 z m-5,8" />
+    <path android:fillColor="#EDEEF4" android:pathData="M44,102 h120 a3.5,3.5 0 0 1 0,7 h-120 a3.5,3.5 0 0 1 0,-7 z" />
+</vector>

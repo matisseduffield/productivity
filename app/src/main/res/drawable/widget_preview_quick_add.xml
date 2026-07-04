@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Picker preview mocking the quick-add bar: four action chips. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="250dp" android:height="52dp"
+    android:viewportWidth="250" android:viewportHeight="52">
+    <path android:fillColor="#14161D"
+        android:pathData="M16,0 h218 a16,16 0 0 1 16,16 v20 a16,16 0 0 1 -16,16 H16 a16,16 0 0 1 -16,-16 V16 A16,16 0 0 1 16,0 z" />
+    <path android:fillColor="#1E212B" android:pathData="M8,8 h52 a10,10 0 0 1 0,36 h-52 a10,10 0 0 1 0,-36 z m0,18" />
+    <path android:fillColor="#1E212B" android:pathData="M68,8 h52 a10,10 0 0 1 0,36 h-52 a10,10 0 0 1 0,-36 z m0,18" />
+    <path android:fillColor="#1E212B" android:pathData="M128,8 h52 a10,10 0 0 1 0,36 h-52 a10,10 0 0 1 0,-36 z m0,18" />
+    <path android:fillColor="#1E212B" android:pathData="M188,8 h54 a10,10 0 0 1 0,36 h-54 a10,10 0 0 1 0,-36 z m0,18" />
+    <path android:fillColor="#8B6FE8" android:pathData="M18,23 h32 a3,3 0 0 1 0,6 h-32 a3,3 0 0 1 0,-6 z M78,23 h32 a3,3 0 0 1 0,6 h-32 a3,3 0 0 1 0,-6 z M138,23 h32 a3,3 0 0 1 0,6 h-32 a3,3 0 0 1 0,-6 z M198,23 h34 a3,3 0 0 1 0,6 h-34 a3,3 0 0 1 0,-6 z" />
+</vector>

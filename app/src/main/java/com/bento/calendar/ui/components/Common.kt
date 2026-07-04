@@ -82,7 +82,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import com.bento.calendar.data.Cats
+import com.bento.calendar.data.Category
 import com.bento.calendar.ui.theme.LocalBento
 import com.bento.calendar.ui.theme.color
 import java.time.Instant
@@ -480,7 +480,12 @@ fun FullOverlay(content: @Composable BoxScope.() -> Unit) {
 /** Category pill row for editors; includeNone adds the task editor's "None". */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun CategoryPills(selected: String, onSelect: (String) -> Unit, includeNone: Boolean = false) {
+fun CategoryPills(
+    categories: List<Category>,
+    selected: String,
+    onSelect: (String) -> Unit,
+    includeNone: Boolean = false,
+) {
     val c = LocalBento.current
     FlowRow(
         horizontalArrangement = Arrangement.spacedBy(7.dp),
@@ -489,7 +494,7 @@ fun CategoryPills(selected: String, onSelect: (String) -> Unit, includeNone: Boo
         if (includeNone) {
             Pill(label = "None", dot = null, active = selected == "") { onSelect("") }
         }
-        Cats.ALL.forEach { cat ->
+        categories.forEach { cat ->
             Pill(label = cat.label, dot = cat.color, active = selected == cat.id) { onSelect(cat.id) }
         }
     }

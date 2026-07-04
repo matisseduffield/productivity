@@ -28,6 +28,12 @@ class MainActivity : ComponentActivity() {
     private val notifPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
+    /** READ_CALENDAR for the device-calendar overlay (Settings toggle). */
+    private val calendarPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            vm.onCalendarPermissionResult(granted)
+        }
+
     /** Settings > Data > Export: SAF "save as" for the backup JSON. */
     private val exportLauncher =
         registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
@@ -103,7 +109,10 @@ class MainActivity : ComponentActivity() {
             )
         }
         requestNotificationPermission()
-        vm.checkForUpdates()
+        // Play builds update through the store; only GitHub builds self-check.
+        if (BuildConfig.SELF_UPDATER) vm.checkForUpdates()
+        vm.requestCalendarPermission = { calendarPermission.launch(Manifest.permission.READ_CALENDAR) }
+        if (vm.hasCalendarOverlayEnabled()) vm.refreshDeviceCalendarData()
         // Only on a genuinely fresh launch: on recreation (rotation, theme
         // change) getIntent() still carries the old shortcut action and would
         // re-fire it — reopening a dismissed editor or spawning another note.
