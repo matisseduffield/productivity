@@ -759,6 +759,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             pinBuf = ""
             pinErr = false
             searchOpen = false
+            // Lead with the biometric sheet when it's usable; the PIN pad
+            // stays underneath as the fallback.
+            requestNoteBio()
         } else {
             openNoteId = id
             disarm(Arm.NOTE)
@@ -897,6 +900,68 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         pinCtx = null
         pinBuf = ""
         pinErr = false
+    }
+
+    // ---- Biometrics ----
+    /**
+     * Set by MainActivity (BiometricPrompt needs the FragmentActivity):
+     * (title, subtitle, allowDeviceCredential, onSuccess). Null while no
+     * activity is attached — callers no-op and the PIN pad remains.
+     */
+    var bioPrompt: ((String, String?, Boolean, () -> Unit) -> Unit)? = null
+
+    /** Hardware states, refreshed by MainActivity onStart (enrollment can
+     *  change in system settings while we're backgrounded). */
+    var bioAvailable by mutableStateOf(false)
+    var credentialAvailable by mutableStateOf(false)
+
+    /** The PIN sheet's fingerprint affordance (and the auto-prompt) gate. */
+    val canNoteBio: Boolean
+        get() = bioAvailable && data.value?.prefs?.bioNotes == true
+
+    /** Whether the app-lock overlay is up (set on launch/return, not here). */
+    var appLocked by mutableStateOf(false)
+        private set
+
+    fun lockApp() {
+        appLocked = true
+    }
+
+    /**
+     * Prompt to clear the app lock. Falls back to the device PIN/pattern —
+     * the app's own note PIN is deliberately NOT a fallback here: the app
+     * lock guards everything, notes included, so it shouldn't be weaker than
+     * the lock screen.
+     */
+    fun requestAppUnlock() {
+        if (!credentialAvailable) {
+            // No biometrics and no device lock: nothing can ever satisfy the
+            // prompt, so fail open rather than brick the app.
+            appLocked = false
+            return
+        }
+        bioPrompt?.invoke("Unlock Bento", null, true) { appLocked = false }
+    }
+
+    /**
+     * Prompt to unlock the note behind the current Enter-mode PIN sheet.
+     * Success behaves exactly like a correct PIN; dismissal leaves the pad.
+     */
+    fun requestNoteBio() {
+        val ctx = pinCtx ?: return
+        if (ctx.mode != PinMode.Enter || !canNoteBio) return
+        // One prompt at a time: constructing a second BiometricPrompt while
+        // the app-lock sheet is up swaps the in-flight callback (both share
+        // the activity-scoped BiometricViewModel) and a successful auth would
+        // unlock the NOTE while the lock overlay stays. The PIN sheet's link
+        // re-offers biometrics once the app lock clears.
+        if (appLocked) return
+        bioPrompt?.invoke("Unlock note", ctx.noteTitle.ifEmpty { null }, false) {
+            // Re-read: the sheet may have been dismissed while the system
+            // prompt was up; finishing a stale ctx would unlock the wrong UI.
+            val current = pinCtx ?: return@invoke
+            if (current.mode == PinMode.Enter) finishPin(current)
+        }
     }
 
     /** Settings: set or change the PIN. */
@@ -1069,6 +1134,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun setTheme(theme: String) = mutPrefs { it.copy(theme = theme) }
     fun setAccent(hex: String) = mutPrefs { it.copy(accent = hex) }
     fun toggleDynamicColor() = mutPrefs { it.copy(dynamicColor = !it.dynamicColor) }
+    fun toggleBioNotes() = mutPrefs { it.copy(bioNotes = !it.bioNotes) }
+    fun toggleAppLock() = mutPrefs { it.copy(appLock = !it.appLock) }
     fun toggle24h() = mutPrefs { it.copy(use24h = !it.use24h) }
     fun toggleMonday() = mutPrefs { it.copy(monday = !it.monday) }
     fun setRemindDef(v: Int?) = mutPrefs { it.copy(remindDef = v) }

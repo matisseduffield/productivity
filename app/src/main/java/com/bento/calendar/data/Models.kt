@@ -143,6 +143,10 @@ data class Prefs(
     val deviceCalIds: List<Long> = emptyList(),
     /** Material You: derive the accent from the system wallpaper (Android 12+). */
     val dynamicColor: Boolean = false,
+    /** Fingerprint/face unlocks PIN-locked notes (when hardware allows). */
+    val bioNotes: Boolean = true,
+    /** Require biometric/device unlock when the app opens. */
+    val appLock: Boolean = false,
 )
 
 object Recur {

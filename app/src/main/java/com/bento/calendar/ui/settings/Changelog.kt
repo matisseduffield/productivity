@@ -41,6 +41,14 @@ data class ChangelogEntry(val version: String, val date: String, val changes: Li
 
 val CHANGELOG = listOf(
     ChangelogEntry(
+        "2.3.0", "July 2026",
+        listOf(
+            "Unlock private notes with your fingerprint or face — the PIN stays as backup",
+            "Optional app lock: require fingerprint, face or your screen lock when Bento opens",
+            "Both live in Settings → Notes & privacy",
+        ),
+    ),
+    ChangelogEntry(
         "2.2.0", "July 2026",
         listOf(
             "Multi-day events — give an event an end date and it spans the days between",

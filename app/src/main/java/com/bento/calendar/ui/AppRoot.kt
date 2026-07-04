@@ -27,6 +27,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
@@ -36,6 +37,7 @@ import androidx.core.view.WindowCompat
 import com.bento.calendar.data.AppData
 import com.bento.calendar.ui.calendar.CalendarScreen
 import com.bento.calendar.ui.components.pressable
+import com.bento.calendar.ui.components.tap
 import com.bento.calendar.ui.notes.NoteEditorOverlay
 import com.bento.calendar.ui.notes.NotesScreen
 import com.bento.calendar.ui.notes.PinSheet
@@ -72,6 +74,16 @@ fun AppRoot(
             val controller = WindowCompat.getInsetsController(window, view)
             controller.isAppearanceLightStatusBars = c.isLight
             controller.isAppearanceLightNavigationBars = c.isLight
+        }
+        // While locked, ONLY the lock screen composes. Hiding (rather than
+        // covering) the app disposes every same-window sheet AND the
+        // separate-window pieces a cover can't reach — time-picker Dialogs,
+        // DropdownMenu popups, and the IME all float above overlays, so a
+        // covered editor could still leak input. Drafts, the open tab, and
+        // sheet state all live in the VM and restore untouched on unlock.
+        if (vm.appLocked) {
+            AppLockScreen(vm)
+            return@BentoTheme
         }
         Box(Modifier.fillMaxSize().background(c.bg)) {
             Column(
@@ -118,6 +130,50 @@ fun AppRoot(
             if (vm.tkDraft != null) TaskEditorSheet(vm, d, now)
             if (vm.pinCtx != null) PinSheet(vm)
             BackHandler(enabled = vm.hasOverlay()) { vm.backPress() }
+        }
+    }
+}
+
+/**
+ * Full-screen gate while the app lock is armed: opaque background (nothing
+ * behind may leak), app name, and an Unlock button that re-triggers the
+ * system sheet (the automatic prompt can be dismissed).
+ */
+@Composable
+private fun AppLockScreen(vm: AppViewModel) {
+    val c = LocalBento.current
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(c.bg)
+            // tap, not pressable: swallow input without the press-scale
+            // animation shrinking the whole lock screen.
+            .tap(onClick = {}),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(BentoIcons.Lock, null, tint = c.faint, modifier = Modifier.size(34.dp))
+        Text(
+            "Bento is locked",
+            fontSize = 17.sp,
+            fontWeight = FontWeight.W700,
+            color = c.tx,
+            modifier = Modifier.padding(top = 14.dp),
+        )
+        Text(
+            "Unlock with fingerprint, face or your screen lock",
+            fontSize = 12.sp,
+            color = c.sub,
+            modifier = Modifier.padding(top = 5.dp),
+        )
+        Box(
+            Modifier
+                .padding(top = 22.dp)
+                .pressable(onClick = { vm.requestAppUnlock() })
+                .background(c.acc, RoundedCornerShape(14.dp))
+                .padding(horizontal = 26.dp, vertical = 12.dp),
+        ) {
+            Text("Unlock", fontSize = 13.5.sp, fontWeight = FontWeight.W700, color = Color.White)
         }
     }
 }

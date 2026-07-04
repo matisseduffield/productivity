@@ -6,13 +6,14 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
+import com.bento.calendar.security.Biometrics
 import com.bento.calendar.ui.AppRoot
 import com.bento.calendar.ui.AppViewModel
 import java.io.ByteArrayOutputStream
@@ -22,8 +23,14 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-class MainActivity : ComponentActivity() {
+// FragmentActivity (not ComponentActivity): androidx.biometric's
+// BiometricPrompt requires it. Everything Compose/launcher-related is
+// unaffected — FragmentActivity is a ComponentActivity.
+class MainActivity : FragmentActivity() {
     private val vm: AppViewModel by viewModels()
+
+    /** elapsedRealtime when the app last left the foreground; 0 = never. */
+    private var lastStoppedAt = 0L
 
     private val notifPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -112,6 +119,31 @@ class MainActivity : ComponentActivity() {
         // Play builds update through the store; only GitHub builds self-check.
         if (BuildConfig.SELF_UPDATER) vm.checkForUpdates()
         vm.requestCalendarPermission = { calendarPermission.launch(Manifest.permission.READ_CALENDAR) }
+        vm.bioPrompt = { title, subtitle, allowCredential, onSuccess ->
+            Biometrics.prompt(
+                activity = this,
+                title = title,
+                subtitle = subtitle,
+                allowDeviceCredential = allowCredential,
+                onSuccess = onSuccess,
+            )
+        }
+        // Availability is also refreshed in onStart; seeding here keeps the
+        // cold-start lock check below from racing the first onStart.
+        vm.bioAvailable = Biometrics.available(this)
+        vm.credentialAvailable = Biometrics.anyCredential(this)
+        // Cold start ONLY: recreation (rotation, theme change) re-runs
+        // onCreate with the VM's appLocked already settled — re-arming here
+        // would throw the lock up mid-use every time the phone rotates.
+        if (savedInstanceState == null) {
+            lifecycleScope.launch {
+                val d = vm.data.first { it != null }!!
+                if (d.prefs.appLock && vm.credentialAvailable) {
+                    vm.lockApp()
+                    vm.requestAppUnlock()
+                }
+            }
+        }
         if (vm.hasCalendarOverlayEnabled()) vm.refreshDeviceCalendarData()
         // Only on a genuinely fresh launch: on recreation (rotation, theme
         // change) getIntent() still carries the old shortcut action and would
@@ -175,6 +207,30 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        // Enrollment can change in system settings while backgrounded.
+        vm.bioAvailable = Biometrics.available(this)
+        vm.credentialAvailable = Biometrics.anyCredential(this)
+        // Re-lock when coming back after the grace window. The device-
+        // credential fallback bounces through the keyguard (which stops this
+        // activity), so a short grace keeps that round-trip from re-locking.
+        // elapsedRealtime, not wall clock: winding the clock back must not
+        // hold the grace window open indefinitely.
+        val away = android.os.SystemClock.elapsedRealtime() - lastStoppedAt
+        if (!vm.appLocked && lastStoppedAt != 0L && away > APP_LOCK_GRACE_MS &&
+            vm.data.value?.prefs?.appLock == true && vm.credentialAvailable
+        ) {
+            vm.lockApp()
+            vm.requestAppUnlock()
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        lastStoppedAt = android.os.SystemClock.elapsedRealtime()
+    }
+
     override fun onResume() {
         super.onResume()
         vm.refreshNow()
@@ -190,6 +246,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private companion object {
+        /** Returning within this window skips the app-lock re-prompt. */
+        const val APP_LOCK_GRACE_MS = 60_000L
+
         /**
          * Actions declared by the static launcher shortcuts
          * (res/xml/shortcuts.xml) and sent by the widget's quick-add chips

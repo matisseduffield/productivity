@@ -18,8 +18,8 @@ android {
         // CI overrides these from the release tag (VERSION_NAME / VERSION_CODE
         // env) so the built APK's version always matches the tag it ships under
         // — a mismatch would make the app see itself as perpetually outdated.
-        versionCode = (System.getenv("VERSION_CODE") ?: "20200").toInt()
-        versionName = System.getenv("VERSION_NAME") ?: "2.2.0"
+        versionCode = (System.getenv("VERSION_CODE") ?: "20300").toInt()
+        versionName = System.getenv("VERSION_NAME") ?: "2.3.0"
     }
 
     signingConfigs {
@@ -98,6 +98,10 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.foundation)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.biometric)
+    // biometric 1.1.0 transitively pins fragment 1.2.x, which predates the
+    // ActivityResult APIs MainActivity uses — force a current fragment.
+    implementation(libs.androidx.fragment.ktx)
     implementation(libs.androidx.datastore)
     implementation(libs.androidx.glance.appwidget)
     implementation(libs.kotlinx.serialization.json)

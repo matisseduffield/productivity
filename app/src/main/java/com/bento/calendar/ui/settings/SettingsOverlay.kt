@@ -310,7 +310,7 @@ fun SettingsOverlay(
                         icon = BentoIcons.LockLight,
                         title = "Notes PIN",
                         sub = if (hasPin) "PIN is set" else "No PIN yet",
-                        last = true,
+                        last = !vm.bioAvailable && !vm.credentialAvailable,
                     ) {
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -323,6 +323,28 @@ fun SettingsOverlay(
                             if (hasPin) {
                                 TextLink("Remove", onClick = { vm.removePin() }, color = c.dng)
                             }
+                        }
+                    }
+                    // Biometric rows only make sense with something enrolled;
+                    // availability is refreshed by the activity on every start.
+                    if (vm.bioAvailable) {
+                        SettingsRow(
+                            icon = BentoIcons.LockLight,
+                            title = "Biometric note unlock",
+                            sub = "Fingerprint or face instead of the PIN",
+                            last = !vm.credentialAvailable,
+                        ) {
+                            BentoSwitch(on = prefs.bioNotes, onToggle = { vm.toggleBioNotes() })
+                        }
+                    }
+                    if (vm.credentialAvailable) {
+                        SettingsRow(
+                            icon = BentoIcons.LockLight,
+                            title = "Lock the app",
+                            sub = "Ask for fingerprint, face or screen lock on open",
+                            last = true,
+                        ) {
+                            BentoSwitch(on = prefs.appLock, onToggle = { vm.toggleAppLock() })
                         }
                     }
                 }

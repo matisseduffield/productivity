@@ -143,6 +143,24 @@ fun PinSheet(vm: AppViewModel) {
                 }
             }
         }
+
+        // ---- Biometric re-trigger ----
+        // The system sheet auto-opens with the pad; this brings it back after
+        // a dismissal without forcing the user to type the PIN.
+        if (ctx.mode == PinMode.Enter && vm.canNoteBio) {
+            Text(
+                "Use fingerprint or face",
+                fontSize = 12.5.sp,
+                fontWeight = FontWeight.W600,
+                color = c.acc,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 14.dp)
+                    .pressable(onClick = { vm.requestNoteBio() })
+                    .padding(vertical = 4.dp),
+            )
+        }
     }
 }
 
