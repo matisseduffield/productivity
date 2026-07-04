@@ -190,7 +190,7 @@ fun TasksScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
 
 /**
  * Task list row (.trow): checkbox, title (with a priority dot when set), then
- * (open rows only) repeat badge, category dot and due chip. Tasks with a
+ * (open rows only) repeat badge, category dot, reminder bell and due chip. Tasks with a
  * checklist get a compact progress line under the title ("2/5" + thin bar +
  * chevron) that expands the steps inline. Done rows are struck through and
  * faint. Wrapped in a [SwipeActionRow]: swipe right to toggle done (repeating
@@ -314,6 +314,15 @@ private fun TaskRow(
                     }
                     if (categoryColor != null) {
                         Dot(categoryColor)
+                    }
+                    if (task.remindAt != null && !task.done) {
+                        // Reminder badge: a time is set on the due date.
+                        Icon(
+                            BentoIcons.Bell,
+                            null,
+                            tint = c.faint,
+                            modifier = Modifier.size(12.dp),
+                        )
                     }
                     val due = task.due
                     if (due != null && !task.done) {

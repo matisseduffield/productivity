@@ -47,9 +47,11 @@ import com.bento.calendar.ui.components.CategoryPills
 import com.bento.calendar.ui.components.DangerTextButton
 import com.bento.calendar.ui.components.FieldLabel
 import com.bento.calendar.ui.components.PrimaryButton
+import com.bento.calendar.ui.components.TextLink
 import com.bento.calendar.ui.components.pressable
 import com.bento.calendar.ui.theme.LocalBento
 import java.time.LocalDateTime
+import java.time.temporal.ChronoUnit
 
 /** Duration quick-pick presets: label -> minutes. */
 private val DurationPresets = listOf(
@@ -76,6 +78,11 @@ fun EventEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
     val focusManager = LocalFocusManager.current
     // Editing an existing recurring event: expose "this event vs whole series".
     val recurringEdit = d.id != null && d.occurrenceDate != null
+    // Valid multi-day span in the draft: an end day strictly after the start
+    // day (mirrors saveEvent / EventItem.spanEnd). While set, the time fields
+    // become independent (start on the first day, end on the last), so the
+    // within-day duration UI and end-after-start validation don't apply.
+    val spanEnd = d.endDate?.takeIf { it.isAfter(d.date) }
     // Series base date, read once at composition — while scope is Single the
     // draft's date is normalized to the tapped occurrence, so switching back
     // to Series must restore the original series date.
@@ -117,8 +124,50 @@ fun EventEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
             BentoDateField(
                 value = d.date,
                 display = Fmt.dayShort(d.date),
-                onPick = { v -> vm.updateEventDraft { it.copy(date = v) } },
+                onPick = { v ->
+                    vm.updateEventDraft {
+                        // Moving the start day onto/past the end day collapses
+                        // the draft back to a single day; an earlier start
+                        // keeps the span.
+                        it.copy(date = v, endDate = it.endDate?.takeIf { ed -> ed.isAfter(v) })
+                    }
+                },
             )
+        }
+        // Optional last day — turns the event into a multi-day span. Hidden
+        // while a recurrence is selected: spans and repeats exclude each other
+        // (saveEvent enforces recur = NONE for spans), so the user first sets
+        // "Doesn't repeat" to stretch an event across days.
+        if (d.recur == Recur.NONE) {
+            Column(Modifier.padding(top = 15.dp)) {
+                Row(Modifier.fillMaxWidth()) {
+                    FieldLabel("Ends · optional")
+                    Spacer(Modifier.weight(1f))
+                    if (d.endDate != null) {
+                        TextLink("Clear", onClick = { vm.updateEventDraft { it.copy(endDate = null) } })
+                    }
+                }
+                BentoDateField(
+                    // Seed the picker at the day after the start so "ends
+                    // tomorrow" is a single tap.
+                    value = d.endDate ?: d.date.plusDays(1),
+                    display = d.endDate?.let { Fmt.dayShort(it) } ?: "Same day",
+                    onPick = { v ->
+                        vm.updateEventDraft {
+                            // Picking on/before the start day means single-day.
+                            it.copy(endDate = if (v.isAfter(it.date)) v else null)
+                        }
+                    },
+                )
+                if (spanEnd != null) {
+                    Text(
+                        "Runs ${ChronoUnit.DAYS.between(d.date, spanEnd) + 1} days",
+                        fontSize = 11.sp,
+                        color = c.sub,
+                        modifier = Modifier.padding(top = 6.dp, start = 2.dp),
+                    )
+                }
+            }
         }
         // All-day toggle; when on, the time-of-day controls below disappear
         // (saveEvent forces 00:00-23:59 regardless of the hidden fields).
@@ -159,27 +208,33 @@ fun EventEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Column(Modifier.weight(1f)) {
-                    FieldLabel("Starts")
+                    FieldLabel(if (spanEnd != null) "Starts · first day" else "Starts")
                     BentoTimeField(
                         valueHm = d.start,
                         display = Fmt.time(d.start, use24h),
                         use24h = use24h,
                         onPick = { newStart ->
-                            // Keep the current duration when the start moves.
-                            // Zero-or-negative durations fall back to 60 min,
-                            // matching saveEvent's coercion.
-                            val raw = d.end.toMins() - d.start.toMins()
-                            val dur = if (raw <= 0) 60 else raw
-                            // Cap the start at 23:58 so the end always has at
-                            // least one minute of headroom before 23:59.
-                            val startM = newStart.toMins().coerceAtMost(1438)
-                            val end = minsToHm((startM + dur).coerceIn(startM + 1, 1439))
-                            vm.updateEventDraft { it.copy(start = minsToHm(startM), end = end) }
+                            if (spanEnd != null) {
+                                // Multi-day: the end lives on the last day, so
+                                // the start moves freely — no duration to keep.
+                                vm.updateEventDraft { it.copy(start = newStart) }
+                            } else {
+                                // Keep the current duration when the start moves.
+                                // Zero-or-negative durations fall back to 60 min,
+                                // matching saveEvent's coercion.
+                                val raw = d.end.toMins() - d.start.toMins()
+                                val dur = if (raw <= 0) 60 else raw
+                                // Cap the start at 23:58 so the end always has at
+                                // least one minute of headroom before 23:59.
+                                val startM = newStart.toMins().coerceAtMost(1438)
+                                val end = minsToHm((startM + dur).coerceIn(startM + 1, 1439))
+                                vm.updateEventDraft { it.copy(start = minsToHm(startM), end = end) }
+                            }
                         },
                     )
                 }
                 Column(Modifier.weight(1f)) {
-                    FieldLabel("Ends")
+                    FieldLabel(if (spanEnd != null) "Ends · last day" else "Ends")
                     BentoTimeField(
                         valueHm = d.end,
                         display = Fmt.time(d.end, use24h),
@@ -188,49 +243,54 @@ fun EventEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                     )
                 }
             }
-            val durMins = d.end.toMins() - d.start.toMins()
-            if (durMins > 0) {
-                Text(
-                    Fmt.duration(d.start, d.end),
-                    fontSize = 11.sp,
-                    color = c.sub,
-                    modifier = Modifier.padding(top = 6.dp, start = 2.dp),
-                )
-            } else {
-                // Mirrors saveEvent's coercion: end = min(start + 60, 23:59).
-                val fixedEnd = (d.start.toMins() + 60).coerceAtMost(1439)
-                Text(
-                    if (fixedEnd == d.start.toMins()) {
-                        // Start is 23:59 — no headroom left; avoid "will save as 0 min".
-                        "Ends before it starts — end will be adjusted on save"
-                    } else {
-                        "Ends before it starts — will save as " +
-                            Fmt.duration(d.start, minsToHm(fixedEnd))
-                    },
-                    fontSize = 11.sp,
-                    color = c.dng,
-                    modifier = Modifier.padding(top = 6.dp, start = 2.dp),
-                )
-            }
-            Column(Modifier.padding(top = 15.dp)) {
-                FieldLabel("Duration")
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(7.dp),
-                    verticalArrangement = Arrangement.spacedBy(7.dp),
-                ) {
-                    DurationPresets.forEach { (label, mins) ->
-                        OptionPill(
-                            label = label,
-                            active = durMins > 0 && durMins == mins,
-                            // A preset that would push the end past 23:59 cannot
-                            // be honored — disable it instead of silently capping.
-                            enabled = d.start.toMins() + mins <= 1439,
-                            onClick = {
-                                vm.updateEventDraft {
-                                    it.copy(end = minsToHm((it.start.toMins() + mins).coerceAtMost(1439)))
-                                }
-                            },
-                        )
+            // Within-day duration and end-after-start validation only make
+            // sense on a single day — a span's start and end are independent
+            // times on different days (the "Runs N days" hint above covers it).
+            if (spanEnd == null) {
+                val durMins = d.end.toMins() - d.start.toMins()
+                if (durMins > 0) {
+                    Text(
+                        Fmt.duration(d.start, d.end),
+                        fontSize = 11.sp,
+                        color = c.sub,
+                        modifier = Modifier.padding(top = 6.dp, start = 2.dp),
+                    )
+                } else {
+                    // Mirrors saveEvent's coercion: end = min(start + 60, 23:59).
+                    val fixedEnd = (d.start.toMins() + 60).coerceAtMost(1439)
+                    Text(
+                        if (fixedEnd == d.start.toMins()) {
+                            // Start is 23:59 — no headroom left; avoid "will save as 0 min".
+                            "Ends before it starts — end will be adjusted on save"
+                        } else {
+                            "Ends before it starts — will save as " +
+                                Fmt.duration(d.start, minsToHm(fixedEnd))
+                        },
+                        fontSize = 11.sp,
+                        color = c.dng,
+                        modifier = Modifier.padding(top = 6.dp, start = 2.dp),
+                    )
+                }
+                Column(Modifier.padding(top = 15.dp)) {
+                    FieldLabel("Duration")
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                        verticalArrangement = Arrangement.spacedBy(7.dp),
+                    ) {
+                        DurationPresets.forEach { (label, mins) ->
+                            OptionPill(
+                                label = label,
+                                active = durMins > 0 && durMins == mins,
+                                // A preset that would push the end past 23:59 cannot
+                                // be honored — disable it instead of silently capping.
+                                enabled = d.start.toMins() + mins <= 1439,
+                                onClick = {
+                                    vm.updateEventDraft {
+                                        it.copy(end = minsToHm((it.start.toMins() + mins).coerceAtMost(1439)))
+                                    }
+                                },
+                            )
+                        }
                     }
                 }
             }
@@ -255,16 +315,33 @@ fun EventEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
             if (!(recurringEdit && d.scope == EditScope.Single)) {
                 Column(Modifier.weight(1f)) {
                     FieldLabel("Repeat")
-                    BentoSelectField(
-                        value = d.recur,
-                        options = listOf(
-                            "Doesn't repeat" to Recur.NONE,
-                            "Daily" to Recur.DAILY,
-                            "Weekly" to Recur.WEEKLY,
-                            "Monthly" to Recur.MONTHLY,
-                        ),
-                        onSelect = { v -> vm.updateEventDraft { it.copy(recur = v) } },
-                    )
+                    if (spanEnd != null) {
+                        // Spans and repeats exclude each other; clearing the
+                        // end date above brings the selector back.
+                        Text(
+                            "Multi-day events don't repeat",
+                            fontSize = 11.sp,
+                            color = c.faint,
+                            modifier = Modifier.padding(top = 4.dp, start = 2.dp),
+                        )
+                    } else {
+                        BentoSelectField(
+                            value = d.recur,
+                            options = listOf(
+                                "Doesn't repeat" to Recur.NONE,
+                                "Daily" to Recur.DAILY,
+                                "Weekly" to Recur.WEEKLY,
+                                "Monthly" to Recur.MONTHLY,
+                            ),
+                            onSelect = { v ->
+                                vm.updateEventDraft {
+                                    // Belt and braces: a recurrence clears any
+                                    // (already-invalid) leftover end date.
+                                    it.copy(recur = v, endDate = if (v == Recur.NONE) it.endDate else null)
+                                }
+                            },
+                        )
+                    }
                 }
             }
             Column(Modifier.weight(1f)) {

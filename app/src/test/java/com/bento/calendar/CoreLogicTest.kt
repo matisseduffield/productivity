@@ -64,6 +64,75 @@ class RecurrenceTest {
     }
 }
 
+/** Multi-day (endDate) expansion in Recurrence.kt: occursOn span + per-day segments. */
+class MultiDayEventTest {
+    /** 14:00-16:00 with a 10-min reminder, spanning [date]..[endDate]. */
+    private fun span(date: String, endDate: String?, recur: String = Recur.NONE) =
+        EventItem(
+            id = "e", title = "t", date = date, start = "14:00", end = "16:00",
+            endDate = endDate, recur = recur, remind = 10,
+        )
+
+    private fun segmentOn(e: EventItem, date: String) =
+        occurrencesOn(listOf(e), LocalDate.parse(date)).single()
+
+    @Test
+    fun `multi-day event occurs on every covered day and no others`() {
+        val e = span("2026-07-10", "2026-07-12")
+        assertFalse(e.occursOn(LocalDate.parse("2026-07-09")))
+        assertTrue(e.occursOn(LocalDate.parse("2026-07-10")))
+        assertTrue(e.occursOn(LocalDate.parse("2026-07-11")))
+        assertTrue(e.occursOn(LocalDate.parse("2026-07-12")))
+        assertFalse(e.occursOn(LocalDate.parse("2026-07-13")))
+    }
+
+    @Test
+    fun `endDate is ignored when the event recurs`() {
+        // spanEnd() is null for recurring events — the weekly rule decides.
+        // 2026-07-10 is a Friday: the in-span Saturday misses, next Friday hits.
+        val e = span("2026-07-10", "2026-07-12", recur = Recur.WEEKLY)
+        assertFalse(e.occursOn(LocalDate.parse("2026-07-11")))
+        assertTrue(e.occursOn(LocalDate.parse("2026-07-17")))
+    }
+
+    @Test
+    fun `endDate on or before the start date means single day`() {
+        assertTrue(span("2026-07-10", "2026-07-10").occursOn(LocalDate.parse("2026-07-10")))
+        assertFalse(span("2026-07-10", "2026-07-10").occursOn(LocalDate.parse("2026-07-11")))
+        assertFalse(span("2026-07-10", "2026-07-09").occursOn(LocalDate.parse("2026-07-09")))
+    }
+
+    @Test
+    fun `first day segment keeps start and reminder, runs to midnight`() {
+        val occ = segmentOn(span("2026-07-10", "2026-07-12"), "2026-07-10")
+        assertEquals("2026-07-10", occ.date)
+        assertEquals("14:00", occ.start)
+        assertEquals("23:59", occ.end)
+        assertEquals(10, occ.remind) // only the real start reminds
+        assertFalse(occ.allDay)
+    }
+
+    @Test
+    fun `middle day segment is an all-day block without a reminder`() {
+        val occ = segmentOn(span("2026-07-10", "2026-07-12"), "2026-07-11")
+        assertEquals("2026-07-11", occ.date)
+        assertEquals("00:00", occ.start)
+        assertEquals("23:59", occ.end)
+        assertTrue(occ.allDay)
+        assertNull(occ.remind)
+    }
+
+    @Test
+    fun `last day segment runs midnight to the original end, no reminder`() {
+        val occ = segmentOn(span("2026-07-10", "2026-07-12"), "2026-07-12")
+        assertEquals("2026-07-12", occ.date)
+        assertEquals("00:00", occ.start)
+        assertEquals("16:00", occ.end)
+        assertNull(occ.remind)
+        assertFalse(occ.allDay)
+    }
+}
+
 class FormatTest {
     @Test
     fun `24h and 12h time`() {
@@ -234,6 +303,19 @@ class RecurringTaskTest {
         val out = com.bento.calendar.data.completeTask(d, "a", today)
         assertFalse(out.tasks[0].done)
         assertEquals("2026-07-02", out.tasks[0].due)
+    }
+
+    @Test
+    fun `monthly task due jan 31 clamps to feb 28`() {
+        // Documents the end-of-month behavior: completeTask advances via
+        // LocalDate.plusMonths, which CLAMPS to the last valid day of the
+        // target month (2026-01-31 -> 2026-02-28), and the task stays on the
+        // 28th thereafter. Contrast with monthly EVENTS (occursOn), which
+        // keep the literal day-of-month and simply skip months without it.
+        val d = data(TaskItem(id = "a", title = "a", due = "2026-01-31", recur = Recur.MONTHLY))
+        val out = com.bento.calendar.data.completeTask(d, "a", LocalDate.parse("2026-01-31"))
+        assertFalse(out.tasks[0].done)
+        assertEquals("2026-02-28", out.tasks[0].due)
     }
 }
 

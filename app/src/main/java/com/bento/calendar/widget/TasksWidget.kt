@@ -42,6 +42,7 @@ import com.bento.calendar.data.Priority
 import com.bento.calendar.data.TaskItem
 import com.bento.calendar.data.completeTask
 import com.bento.calendar.data.toIso
+import com.bento.calendar.reminders.ReminderScheduler
 import com.bento.calendar.ui.Fmt
 import com.bento.calendar.ui.sortScore
 import com.bento.calendar.ui.sortedOpenTasks
@@ -108,9 +109,13 @@ class ToggleTaskAction : ActionCallback {
     ) {
         val taskId = parameters[TASK_ID] ?: return
         runCatching {
-            AppGraph.repository(context).update { x ->
+            val updated = AppGraph.repository(context).update { x ->
                 completeTask(x, taskId, LocalDate.now())
             }
+            // Task reminders live on the same alarm chain — completing (or
+            // advancing) a task from the widget must re-arm it, not leave a
+            // stale fire for a task that's already done.
+            ReminderScheduler.reschedule(context, updated)
             WidgetSync.pushNow(context)
         }
     }

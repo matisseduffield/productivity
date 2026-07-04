@@ -67,6 +67,8 @@ data class EventDraft(
     val remind: Int? = 10,
     val loc: String = "",
     val allDay: Boolean = false,
+    /** Last day of a multi-day event; null = single day. Excludes recurrence. */
+    val endDate: LocalDate? = null,
     /** The tapped instance date when editing a recurring event. */
     val occurrenceDate: LocalDate? = null,
     /** "This event only" vs "whole series" for recurring edits/deletes. */
@@ -81,6 +83,8 @@ data class TaskDraft(
     val recur: String = Recur.NONE,
     val priority: Int = Priority.NONE,
     val subs: List<SubTask> = emptyList(),
+    /** Reminder time ("HH:MM") on the due date; needs [due] to be set. */
+    val remindAt: String? = null,
 )
 
 enum class PinMode { Set, Enter }
@@ -165,6 +169,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val d = repo.data.first()
             ReminderScheduler.reschedule(getApplication(), d)
             lastScheduledEvents = d.events
+            lastScheduledTasks = d.tasks
             // Seed the widget gate too: the widget already reflects the store
             // at launch, so the first mutation only pushes if it changed
             // something widget-relevant.
@@ -177,6 +182,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Events snapshot the alarm chain was last armed for (main-thread only). */
     private var lastScheduledEvents: List<EventItem>? = null
+
+    /** Tasks snapshot ditto — task reminders arm the same chain. */
+    private var lastScheduledTasks: List<TaskItem>? = null
 
     /**
      * The projection of the store the widget actually renders. [mut] only
@@ -218,11 +226,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun mut(transform: (AppData) -> AppData) {
         viewModelScope.launch {
             val d = repo.update(transform)
-            // Alarms only depend on events; note/task/pref edits (e.g. every
-            // editor keystroke) must not trigger a 60-day alarm rescan.
-            if (d.events != lastScheduledEvents) {
+            // Alarms depend on events and tasks (task reminders); note/pref
+            // edits (e.g. every editor keystroke) must not trigger a 60-day
+            // alarm rescan.
+            if (d.events != lastScheduledEvents || d.tasks != lastScheduledTasks) {
                 ReminderScheduler.reschedule(getApplication(), d)
                 lastScheduledEvents = d.events
+                lastScheduledTasks = d.tasks
             }
             // Same idea for the widget: it only shows events, tasks and a
             // few prefs, so gate the push on that projection.
@@ -423,6 +433,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             remind = base.remind,
             loc = base.loc,
             allDay = base.allDay,
+            endDate = base.spanEnd(),
             // For recurring events remember which instance was tapped so
             // "this event only" edits/deletes know their target date.
             occurrenceDate = if (base.recur != Recur.NONE) occurrence.date.toDate() else null,
@@ -491,14 +502,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun saveEvent() {
         val d = evDraft ?: return
+        // Multi-day: a later end day makes the times independent (start on
+        // the first day, end on the last) — the end-after-start rule only
+        // applies within a single day. Multi-day excludes recurrence.
+        val spanEnd = d.endDate?.takeIf { it.isAfter(d.date) }
+        val multiDay = spanEnd != null
         // A start of 23:59 leaves no room for any duration — clamp to 23:58 so
         // the persisted event can never be zero-length. All-day events span
         // the whole day regardless of whatever the time fields held.
         val startM = if (d.allDay) 0 else d.start.toMins().coerceAtMost(1438)
         var endM = if (d.allDay) 1439 else d.end.toMins()
-        if (endM <= startM) {
+        if (!multiDay && endM <= startM) {
             endM = min(startM + 60, 1439)
         }
+        // The last-day segment renders 00:00→end; keep it non-zero-length.
+        if (multiDay && endM < 1) endM = 1
         // "This event only" on a recurring series: carve the tapped date out
         // of the series and spawn a standalone event carrying the edits.
         val singleOcc = d.id != null && d.scope == EditScope.Single && d.occurrenceDate != null
@@ -526,6 +544,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             evDraft = null
             return
         }
+        // Belt and braces: the editor disables recurrence for multi-day
+        // drafts, but never persist both — expansion assumes they exclude.
+        val recur = if (multiDay) Recur.NONE else d.recur
         val rec = EventItem(
             id = d.id ?: newId(),
             title = d.title.trim().ifEmpty { "Untitled" },
@@ -534,12 +555,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             end = minsToHm(endM),
             allDay = d.allDay,
             cat = d.cat,
-            recur = d.recur,
+            recur = recur,
             remind = d.remind,
             loc = d.loc.trim(),
+            endDate = spanEnd?.toIso(),
             // Series edits keep the carved-out dates unless recurrence is
             // switched off, which turns it back into a plain one-off.
-            exDates = if (d.recur == Recur.NONE) {
+            exDates = if (recur == Recur.NONE) {
                 emptyList()
             } else {
                 data.value?.events?.firstOrNull { it.id == d.id }?.exDates ?: emptyList()
@@ -582,6 +604,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun moveEvent(id: String, newStartMin: Int) {
         val e = data.value?.events?.firstOrNull { it.id == id } ?: return
+        // Multi-day: start and end live on different days, so "shift by
+        // duration" is meaningless — reschedule through the editor instead.
+        if (e.spanEnd() != null) return
         val dur = (e.end.toMins() - e.start.toMins()).coerceAtLeast(1)
         val s = newStartMin.coerceIn(0, 1439 - dur)
         if (s == e.start.toMins()) return
@@ -599,7 +624,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun openTask(t: TaskItem) {
-        tkDraft = TaskDraft(t.id, t.title, t.due?.toDate(), t.cat, t.recur, t.priority, t.subs)
+        tkDraft = TaskDraft(t.id, t.title, t.due?.toDate(), t.cat, t.recur, t.priority, t.subs, t.remindAt)
         disarm(Arm.TASK)
         searchOpen = false
         fabOpen = false
@@ -643,6 +668,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 recur = d.recur,
                 priority = d.priority,
                 subs = d.subs.map { it.copy(title = it.title.trim()) }.filter { it.title.isNotEmpty() },
+                // A reminder is a time on the due date — meaningless without one.
+                remindAt = if (d.due != null) d.remindAt else null,
             )
             if (i >= 0) {
                 x.copy(tasks = x.tasks.toMutableList().apply { set(i, rec) })
@@ -696,7 +723,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             )
             mut { x -> x.copy(events = x.events + ev) }
         } else {
-            val tk = TaskItem(id = newId(), title = p.title, due = p.date?.toIso())
+            val tk = TaskItem(
+                id = newId(),
+                title = p.title,
+                due = p.date?.toIso(),
+                priority = p.priority,
+            )
             mut { x -> x.copy(tasks = x.tasks + tk) }
         }
         fabOpen = false
@@ -960,7 +992,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun toggleDeviceCal(id: Long) {
         val all = deviceCals.map { it.id }
         mutPrefs { p ->
-            val current = if (p.deviceCalIds.isEmpty()) all else p.deviceCalIds
+            // Purge ids for calendars that no longer exist on the device —
+            // they'd otherwise pin deviceCalIds non-empty ("some selected")
+            // forever, with no visible toggle to clear them.
+            val current = (if (p.deviceCalIds.isEmpty()) all else p.deviceCalIds)
+                .filter { it in all }
             val next = if (id in current) current - id else current + id
             p.copy(deviceCalIds = if (next.toSet() == all.toSet()) emptyList() else next)
         }
@@ -990,6 +1026,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     deviceEvents = emptyMap()
                     deviceWindow = null
                 }
+                // Widgets query the overlay themselves in provideGlance —
+                // push so they drop (or pick up) device rows promptly.
+                WidgetSync.push(app)
                 return@launch
             }
             val cals = DeviceCalendars.calendars(app)
@@ -1001,6 +1040,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 deviceEvents = events
                 deviceWindow = from to to
             }
+            WidgetSync.push(app)
         }
     }
 
@@ -1346,7 +1386,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // recovery short of clearing app data.
             decoded.events.forEach { ev ->
                 ev.date.toDate()
-                require(ev.end.toMins() > ev.start.toMins())
+                ev.endDate?.toDate()
+                // Multi-day spans put start and end on different days, so
+                // end-after-start only holds for single-day events. Both
+                // toMins calls still validate the "HH:MM" shape.
+                require(ev.end.toMins() > ev.start.toMins() || ev.spanEnd() != null)
                 ev.exDates.forEach { it.toDate() }
             }
             decoded.tasks.forEach { it.due?.toDate() }
@@ -1366,12 +1410,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             decoded.copy(
                 categories = validCats,
                 events = decoded.events.map {
-                    if (it.recur in knownRecur) it else it.copy(recur = Recur.NONE)
+                    val recur = if (it.recur in knownRecur) it.recur else Recur.NONE
+                    // spanEnd() is the read-time truth; normalizing to it here
+                    // drops endDate from recurring or backwards spans.
+                    it.copy(recur = recur, endDate = it.copy(recur = recur).spanEnd()?.toIso())
                 },
                 tasks = decoded.tasks.map {
                     it.copy(
                         recur = if (it.recur in knownRecur) it.recur else Recur.NONE,
                         priority = it.priority.coerceIn(Priority.NONE, Priority.HIGH),
+                        // A reminder needs a due date and a parseable time.
+                        remindAt = it.remindAt?.takeIf { r ->
+                            it.due != null && runCatching { r.toMins() }.isSuccess
+                        },
                     )
                 },
                 prefs = decoded.prefs.copy(

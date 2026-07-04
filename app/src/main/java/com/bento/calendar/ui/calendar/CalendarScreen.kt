@@ -581,10 +581,21 @@ private fun MonthCell(
 @Composable
 private fun AgendaRow(vm: AppViewModel, data: AppData, e: EventItem) {
     val c = LocalBento.current
+    // Multi-day span segments (occurrencesOn keeps endDate on every segment):
+    // first/middle days still have spanEnd() ahead; the last day is re-dated
+    // onto its endDate, so endDate == date marks it.
+    val span = e.spanEnd()
+    val spanLast = e.endDate != null && e.endDate == e.date
     val meta = buildString {
         // "23 h 59" for an all-day event is noise — the time column already
-        // says "All day".
-        if (!e.allDay) append(Fmt.duration(e.start, e.end))
+        // says "All day". A span segment's within-day duration ("15 h") is
+        // equally noise: say where the span is going instead.
+        when {
+            span != null -> append("Until ${Fmt.dayShort(span)}")
+            spanLast && !e.allDay -> append("Ends ${Fmt.time(e.end, data.prefs.use24h)}")
+            spanLast -> append("Last day")
+            !e.allDay -> append(Fmt.duration(e.start, e.end))
+        }
         if (e.loc.isNotEmpty()) {
             if (isNotEmpty()) append(" · ")
             append(e.loc)
@@ -1203,6 +1214,15 @@ private fun DayEventBlock(
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
 
+    // Multi-day span segment: occurrencesOn keeps endDate on every segment,
+    // so any non-null endDate marks one (first day still has spanEnd() ahead;
+    // the last day is re-dated onto its endDate). Drag-to-reschedule is
+    // disabled for them — moveEvent no-ops on spans, so an optimistic ghost
+    // would only snap back confusingly.
+    val spanSeg = e.endDate != null
+    val spanFirst = e.spanEnd() != null
+    val spanLast = spanSeg && e.endDate == e.date
+
     // Raw drag offset in px; rendering snaps it to the 15-min grid. Keyed on
     // the event id so a recycled slot never inherits another block's offset.
     var dragOffsetY by remember(e.id) { mutableFloatStateOf(0f) }
@@ -1262,7 +1282,7 @@ private fun DayEventBlock(
             .clip(RoundedCornerShape(11.dp))
             .background(blockColor)
             .tap { vm.openEvent(e) }
-            .pointerInput(e.id) {
+            .then(if (spanSeg) Modifier else Modifier.pointerInput(e.id) {
                 detectDragGesturesAfterLongPress(
                     onDragStart = {
                         settleJob?.cancel()
@@ -1309,7 +1329,7 @@ private fun DayEventBlock(
                     change.consume()
                     dragOffsetY += amt.y
                 }
-            }
+            })
             .padding(horizontal = 10.dp, vertical = 7.dp),
     ) {
         Text(
@@ -1320,7 +1340,13 @@ private fun DayEventBlock(
             lineHeight = 1.3.em,
         )
         Text(
-            Fmt.time(e.start, use24h) + " – " + Fmt.time(e.end, use24h) +
+            // Span segments: "14:00 →" runs on past today; "→ 17:00" ran in
+            // from an earlier day. "– 23:59" / "00:00 –" would be noise.
+            when {
+                spanFirst -> Fmt.time(e.start, use24h) + " →"
+                spanLast -> "→ " + Fmt.time(e.end, use24h)
+                else -> Fmt.time(e.start, use24h) + " – " + Fmt.time(e.end, use24h)
+            } +
                 (if (e.loc.isNotEmpty()) " · " + e.loc else "") +
                 (if (dragging) " → " + Fmt.time(minsToHm(newStartMin), use24h) else ""),
             fontSize = 9.5.sp,

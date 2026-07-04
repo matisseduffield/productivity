@@ -48,6 +48,7 @@ import com.bento.calendar.ui.components.BentoDateField
 import com.bento.calendar.ui.components.BentoSelectField
 import com.bento.calendar.ui.components.BentoSheet
 import com.bento.calendar.ui.components.BentoTextField
+import com.bento.calendar.ui.components.BentoTimeField
 import com.bento.calendar.ui.components.CategoryPills
 import com.bento.calendar.ui.components.DangerTextButton
 import com.bento.calendar.ui.components.Dot
@@ -151,6 +152,26 @@ fun TaskEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 DueChip("Next week", active = d.due == today.plusDays(7)) {
                     vm.updateTaskDraft { it.copy(due = LocalDate.now().plusDays(7)) }
                 }
+            }
+        }
+        // Reminder time on the due date — only meaningful with one (saveTask
+        // nulls remindAt whenever due is cleared).
+        if (d.due != null) {
+            Column(Modifier.padding(top = 15.dp)) {
+                Row(Modifier.fillMaxWidth()) {
+                    FieldLabel("Remind · optional")
+                    Spacer(Modifier.weight(1f))
+                    if (d.remindAt != null) {
+                        TextLink("Clear", onClick = { vm.updateTaskDraft { it.copy(remindAt = null) } })
+                    }
+                }
+                BentoTimeField(
+                    // Empty field opens the picker on a 09:00 suggestion.
+                    valueHm = d.remindAt ?: "09:00",
+                    display = d.remindAt?.let { Fmt.time(it, data.prefs.use24h) } ?: "No reminder",
+                    use24h = data.prefs.use24h,
+                    onPick = { v -> vm.updateTaskDraft { it.copy(remindAt = v) } },
+                )
             }
         }
         Column(Modifier.padding(top = 15.dp)) {

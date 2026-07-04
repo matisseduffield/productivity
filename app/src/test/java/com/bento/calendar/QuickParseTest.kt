@@ -217,4 +217,144 @@ class QuickParseTest {
         assertEquals("00:00", parse("flight 12am").start)
         assertEquals("12:00", parse("flight 12pm").start)
     }
+
+    @Test
+    fun `hyphenated dates are not time ranges`() {
+        // "2026-07-15" must not read its "07-15" as 07:00-15:00 (nor
+        // "05-10-2026" its "05-10") — the range regex rejects digit-hyphen
+        // neighbors on either side.
+        val p1 = parse("review 2026-07-15")
+        assertFalse(p1.isEvent)
+        assertEquals("review 2026-07-15", p1.title)
+        val p2 = parse("ship 05-10-2026")
+        assertFalse(p2.isEvent)
+        assertEquals("ship 05-10-2026", p2.title)
+    }
+
+    // --- Time ranges ---
+
+    @Test
+    fun `range with both meridiems sets both ends`() {
+        val p = parse("meet 3pm-5pm")
+        assertTrue(p.isEvent)
+        assertEquals("meet", p.title)
+        assertEquals("15:00", p.start)
+        assertEquals("17:00", p.end)
+    }
+
+    @Test
+    fun `range tolerates spaces around the hyphen`() {
+        val p = parse("meet 3pm - 5pm")
+        assertEquals("meet", p.title)
+        assertEquals("15:00", p.start)
+        assertEquals("17:00", p.end)
+    }
+
+    @Test
+    fun `range start inherits the end meridiem`() {
+        val p = parse("meet 3-5pm")
+        assertEquals("meet", p.title)
+        assertEquals("15:00", p.start)
+        assertEquals("17:00", p.end)
+    }
+
+    @Test
+    fun `cross-noon range prefers the am start`() {
+        // Inheriting pm would read 23:00-13:00 backwards, so 11 stays am.
+        val p = parse("lunch 11-1pm")
+        assertEquals("lunch", p.title)
+        assertEquals("11:00", p.start)
+        assertEquals("13:00", p.end)
+    }
+
+    @Test
+    fun `full workday range`() {
+        val p = parse("conference 9am-5pm")
+        assertEquals("conference", p.title)
+        assertEquals("09:00", p.start)
+        assertEquals("17:00", p.end)
+    }
+
+    @Test
+    fun `24h range with minutes`() {
+        val p = parse("review 15:00-16:30")
+        assertEquals("review", p.title)
+        assertEquals("15:00", p.start)
+        assertEquals("16:30", p.end)
+    }
+
+    @Test
+    fun `dotted minutes in a range`() {
+        val p = parse("tea 3.30pm-5pm")
+        assertEquals("tea", p.title)
+        assertEquals("15:30", p.start)
+        assertEquals("17:00", p.end)
+    }
+
+    @Test
+    fun `to works as a range separator`() {
+        val p = parse("meet 3pm to 5pm")
+        assertEquals("meet", p.title)
+        assertEquals("15:00", p.start)
+        assertEquals("17:00", p.end)
+    }
+
+    @Test
+    fun `backwards range is ignored, single time takes over`() {
+        // "5pm-3pm" resolves end <= start, so the range is dropped whole and
+        // the text left intact — the single-time pass then claims "5pm" with
+        // the default duration, leaving the dangling "-3pm" in the title.
+        // Pinned actual behavior, not aspiration.
+        val p = parse("dinner 5pm-3pm")
+        assertEquals("dinner -3pm", p.title)
+        assertEquals("17:00", p.start)
+        assertEquals("18:00", p.end)
+    }
+
+    @Test
+    fun `range combines with a weekday date`() {
+        val p = parse("standup mon 9-9:30am")
+        assertTrue(p.isEvent)
+        assertEquals("standup", p.title)
+        assertEquals(LocalDate.of(2026, 7, 6), p.date)
+        assertEquals("09:00", p.start)
+        assertEquals("09:30", p.end)
+    }
+
+    @Test
+    fun `tonight shifts a bare range into the evening`() {
+        // Same rule as single bare hours: both ends in 01:00..11:59 → +12h.
+        val p = parse("drinks tonight 9-11")
+        assertEquals("drinks", p.title)
+        assertEquals(today, p.date)
+        assertEquals("21:00", p.start)
+        assertEquals("23:00", p.end)
+    }
+
+    // --- Priority tokens ---
+
+    @Test
+    fun `priority token on a dated task`() {
+        val p = parse("pay rent !high fri")
+        assertFalse(p.isEvent)
+        assertEquals("pay rent", p.title)
+        assertEquals(LocalDate.of(2026, 7, 10), p.date)
+        assertEquals(3, p.priority)
+    }
+
+    @Test
+    fun `short priority token is medium and stripped`() {
+        val p = parse("email bob !m")
+        assertEquals("email bob", p.title)
+        assertEquals(2, p.priority)
+    }
+
+    @Test
+    fun `priority token in an event still parses and carries through`() {
+        val p = parse("meet bob 3pm !low")
+        assertTrue(p.isEvent)
+        assertEquals("meet bob", p.title)
+        assertEquals("15:00", p.start)
+        assertEquals(1, p.priority)
+    }
 }

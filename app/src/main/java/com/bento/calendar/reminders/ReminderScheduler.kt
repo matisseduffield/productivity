@@ -9,15 +9,17 @@ import android.content.Intent
 import android.os.Build
 import com.bento.calendar.data.AppData
 import com.bento.calendar.data.occurrencesOn
+import com.bento.calendar.data.toIso
 import com.bento.calendar.data.toTime
 import java.time.LocalDateTime
 import java.time.ZoneId
 
 /**
  * Single-alarm chain: we always keep exactly one exact alarm armed for the
- * next upcoming reminder across all events (recurrence expanded). When it
- * fires, [ReminderReceiver] notifies and re-arms for the one after. This
- * avoids alarm-id bookkeeping entirely and survives reboots via BootReceiver.
+ * next upcoming reminder across all events (recurrence expanded) and tasks
+ * (remindAt on the due date). When it fires, [ReminderReceiver] notifies and
+ * re-arms for the one after. This avoids alarm-id bookkeeping entirely and
+ * survives reboots via BootReceiver.
  */
 object ReminderScheduler {
     const val CHANNEL_ID = "reminders"
@@ -33,7 +35,7 @@ object ReminderScheduler {
             "Event reminders",
             NotificationManager.IMPORTANCE_HIGH,
         ).apply {
-            description = "Reminders for calendar events"
+            description = "Reminders for calendar events and tasks"
         }
         nm.createNotificationChannel(channel)
     }
@@ -47,9 +49,10 @@ object ReminderScheduler {
 
     /**
      * Next reminder fire time strictly after [after], or null.
-     * Several events sharing one minute are handled together at fire time.
-     * All-day events store start 00:00, so they remind relative to midnight
-     * ("At start" = 00:00 that day, "1 day before" = the prior midnight).
+     * Several events/tasks sharing one minute are handled together at fire
+     * time. All-day events store start 00:00, so they remind relative to
+     * midnight ("At start" = 00:00 that day, "1 day before" = the prior
+     * midnight). Open tasks with a remindAt fire ON their due date.
      */
     fun nextReminderTime(data: AppData, after: LocalDateTime): LocalDateTime? {
         var best: LocalDateTime? = null
@@ -62,9 +65,19 @@ object ReminderScheduler {
                     best = fireAt
                 }
             }
-            // A reminder fires at most 1 day (1440 min) before its occurrence,
-            // so a later occurrence day can still fire earlier today — only
-            // stop once the best fire time is strictly before this day.
+            val iso = date.toIso()
+            for (t in data.tasks) {
+                val remindAt = t.remindAt ?: continue
+                if (t.done || t.due != iso) continue
+                val fireAt = date.atTime(remindAt.toTime())
+                if (fireAt.isAfter(after) && (best == null || fireAt.isBefore(best))) {
+                    best = fireAt
+                }
+            }
+            // A reminder fires at most 1 day (1440 min) before its occurrence
+            // (task reminders fire ON their day, well inside that bound), so a
+            // later occurrence day can still fire earlier today — only stop
+            // once the best fire time is strictly before this day.
             if (best != null && best.toLocalDate().isBefore(date)) return best
         }
         return best

@@ -359,7 +359,17 @@ private fun UpNextTile(
         else -> "No events today"
     }
     val meta = if (nx != null) {
-        "${Fmt.time(nx.start, use24h)} – ${Fmt.time(nx.end, use24h)} · ${data.categoryOf(nx.cat).label}" +
+        // Multi-day span segments (occurrencesOn keeps endDate on them): the
+        // first day runs on past today ("14:00 → Wed 8 Jul"), the last day ran
+        // in from an earlier one ("Until 17:00") — the 23:59/00:00 sentinel
+        // bounds would be noise.
+        val span = nx.spanEnd()
+        val range = when {
+            span != null -> "${Fmt.time(nx.start, use24h)} → ${Fmt.dayShort(span)}"
+            nx.endDate != null && nx.endDate == nx.date -> "Until ${Fmt.time(nx.end, use24h)}"
+            else -> "${Fmt.time(nx.start, use24h)} – ${Fmt.time(nx.end, use24h)}"
+        }
+        "$range · ${data.categoryOf(nx.cat).label}" +
             if (nx.start.toMins() > nowMin) " · ${Fmt.countdown(nx.start.toMins() - nowMin)}" else ""
     } else {
         "Tap to add an event"
@@ -643,6 +653,12 @@ private fun LaterTodayTile(
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f),
                             )
+                            if (e.spanEnd() != null) {
+                                // First day of a multi-day span — it runs on
+                                // past today. (Continuations start 00:00, so
+                                // they never pass the later-than-now filter.)
+                                Text("→", fontSize = 12.sp, fontWeight = FontWeight.W600, color = c.faint)
+                            }
                             Dot(data.categoryOf(e.cat).color)
                         }
                     } else {

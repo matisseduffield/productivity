@@ -48,7 +48,20 @@ data class EventItem(
      * date and spawns a standalone event with the edits).
      */
     val exDates: List<String> = emptyList(),
-)
+    /**
+     * Last day (ISO) of a multi-day event; null (or <= [date]) = single day.
+     * [start] is the time on the first day, [end] the time on the last —
+     * read-time expansion turns the days between into all-day segments.
+     * Multi-day events never recur ([recur] is forced NONE on save).
+     */
+    val endDate: String? = null,
+) {
+    /** Last covered day when this is a valid multi-day span, else null. */
+    fun spanEnd(): java.time.LocalDate? {
+        if (recur != Recur.NONE) return null
+        return endDate?.toDate()?.takeIf { it.isAfter(date.toDate()) }
+    }
+}
 
 @Serializable
 data class TaskItem(
@@ -67,6 +80,12 @@ data class TaskItem(
     val priority: Int = Priority.NONE,
     /** Checklist steps; repeating tasks reset them when the due date advances. */
     val subs: List<SubTask> = emptyList(),
+    /**
+     * Reminder time ("HH:MM") on the [due] date; null = no reminder.
+     * Meaningless without a due date — save clears it when due is cleared.
+     * Repeating tasks keep it as the due date advances.
+     */
+    val remindAt: String? = null,
 )
 
 @Serializable

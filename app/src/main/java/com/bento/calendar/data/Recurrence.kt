@@ -17,7 +17,8 @@ fun EventItem.occursOn(date: LocalDate): Boolean {
         Recur.DAILY -> !date.isBefore(base)
         Recur.WEEKLY -> !date.isBefore(base) && base.dayOfWeek == date.dayOfWeek
         Recur.MONTHLY -> !date.isBefore(base) && base.dayOfMonth == date.dayOfMonth
-        else -> base == date
+        // Multi-day spans (non-recurring only) cover base..spanEnd.
+        else -> !date.isBefore(base) && !date.isAfter(spanEnd() ?: base)
     }
     return hit && (recur == Recur.NONE || date.toIso() !in exDates)
 }
@@ -47,8 +48,29 @@ fun completeTask(data: AppData, taskId: String, today: LocalDate): AppData =
         },
     )
 
-/** All occurrences on [date], re-dated to it and sorted by start time. */
+/**
+ * All occurrences on [date], re-dated to it and sorted by start time.
+ * Multi-day events fan out into per-day segments: first day runs start→23:59,
+ * days between are all-day, the last day runs 00:00→end. Continuation
+ * segments (anything past the first day) carry `remind = null` so the
+ * reminder chain — which walks these occurrences — only ever fires off the
+ * real start; render surfaces are unaffected (they never read remind).
+ */
 fun occurrencesOn(events: List<EventItem>, date: LocalDate): List<EventItem> =
     events.filter { it.occursOn(date) }
-        .map { it.copy(date = date.toIso()) }
+        .map { e ->
+            val last = e.spanEnd()
+            when {
+                last == null -> e.copy(date = date.toIso())
+                date == e.date.toDate() -> e.copy(date = date.toIso(), end = "23:59")
+                date == last -> e.copy(date = date.toIso(), start = "00:00", remind = null)
+                else -> e.copy(
+                    date = date.toIso(),
+                    start = "00:00",
+                    end = "23:59",
+                    allDay = true,
+                    remind = null,
+                )
+            }
+        }
         .sortedBy { it.start }

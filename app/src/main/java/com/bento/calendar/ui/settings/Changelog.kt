@@ -41,6 +41,16 @@ data class ChangelogEntry(val version: String, val date: String, val changes: Li
 
 val CHANGELOG = listOf(
     ChangelogEntry(
+        "2.2.0", "July 2026",
+        listOf(
+            "Multi-day events — give an event an end date and it spans the days between",
+            "Task reminders: get notified at a time you pick on the due date, with a Done button",
+            "Quick add understands time ranges (\"standup 9-9:30am\") and priorities (\"pay rent !high fri\")",
+            "Your device calendars now show on the Today and Up-next widgets too",
+            "Removed device calendars no longer linger in Settings",
+        ),
+    ),
+    ChangelogEntry(
         "2.1.0", "July 2026",
         listOf(
             "Quick add: type \"Dentist tue 3pm\" and it becomes an event — plain text becomes a task",

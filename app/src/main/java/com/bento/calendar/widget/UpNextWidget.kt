@@ -38,7 +38,9 @@ import com.bento.calendar.data.occurrencesOn
 import com.bento.calendar.data.toMins
 import com.bento.calendar.ui.Fmt
 import com.bento.calendar.ui.theme.BentoColors
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.LocalTime
 
@@ -56,18 +58,28 @@ class UpNextWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val repo = AppGraph.repository(context)
         val initial = repo.data.first()
+        // Device overlay merges into "up next" too — snapshot per session,
+        // keyed to its own day (see BentoWidget for the rollover rationale).
+        // IO hop: Glance 1.1.1 runs provideGlance on Main.
+        val deviceDay = LocalDate.now()
+        val deviceRows = withContext(Dispatchers.IO) {
+            deviceRowsFor(context, initial, deviceDay)
+        }
         provideContent {
             val data by repo.data.collectAsState(initial)
             val today = LocalDate.now()
             val nowMin = LocalTime.now().let { it.hour * 60 + it.minute }
-            val occ = occurrencesOn(data.events, today)
-            val next = occ.firstOrNull { !it.allDay && it.end.toMins() > nowMin }
-                ?: occ.firstOrNull { it.allDay }
+            val occ = (
+                occurrencesOn(data.events, today).map { it to catColor(data, it.cat) } +
+                    if (today == deviceDay) deviceRows else emptyList()
+                ).sortedBy { it.first.start }
+            val nextPair = occ.firstOrNull { !it.first.allDay && it.first.end.toMins() > nowMin }
+                ?: occ.firstOrNull { it.first.allDay }
             UpNextBody(
                 context = context,
-                next = next,
+                next = nextPair?.first,
                 // Dot only renders when next != null; Transparent is inert.
-                dotColor = next?.let { catColor(data, it.cat) } ?: Color.Transparent,
+                dotColor = nextPair?.second ?: Color.Transparent,
                 nowMin = nowMin,
                 use24h = data.prefs.use24h,
                 c = paletteOf(data),
@@ -135,11 +147,15 @@ private fun UpNextBody(
                 )
             }
             Spacer(GlanceModifier.height(2.dp))
+            // Span segments: show the real edge with an arrow instead of the
+            // 00:00/23:59 sentinels (same language as the in-app agenda).
+            val spanSeg = next.endDate != null && !next.allDay
             Text(
-                if (next.allDay) {
-                    "All day"
-                } else {
-                    "${Fmt.time(next.start, use24h)} – ${Fmt.time(next.end, use24h)}"
+                when {
+                    next.allDay -> "All day"
+                    spanSeg && next.start == "00:00" -> "Until ${Fmt.time(next.end, use24h)}"
+                    spanSeg && next.end == "23:59" -> "${Fmt.time(next.start, use24h)} →"
+                    else -> "${Fmt.time(next.start, use24h)} – ${Fmt.time(next.end, use24h)}"
                 },
                 style = TextStyle(color = ColorProvider(c.sub), fontSize = 10.5.sp),
                 maxLines = 1,

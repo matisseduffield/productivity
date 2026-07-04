@@ -26,6 +26,9 @@ import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
 import com.bento.calendar.MainActivity
 import com.bento.calendar.data.AppData
+import com.bento.calendar.data.DeviceCalendars
+import com.bento.calendar.data.EventItem
+import com.bento.calendar.data.toIso
 import com.bento.calendar.ui.theme.BentoColors
 import com.bento.calendar.ui.theme.DarkColors
 import com.bento.calendar.ui.theme.LightColors
@@ -121,6 +124,40 @@ internal fun paletteOf(data: AppData): BentoColors =
 internal fun accentOf(data: AppData): Color = hexColor(data.prefs.accent)
 
 internal fun catColor(data: AppData, cat: String): Color = hexColor(data.categoryOf(cat).colorHex)
+
+/**
+ * Today's device-calendar overlay as widget rows: (synthetic event, tint)
+ * pairs ready to merge with the bento occurrences. Empty when the overlay is
+ * off or READ_CALENDAR is missing.
+ *
+ * BLOCKING resolver query — and Glance 1.1.1's SessionWorker runs
+ * provideGlance on Dispatchers.Main, so callers MUST hop to Dispatchers.IO
+ * (`withContext`) or every widget refresh janks the app's UI thread.
+ * WidgetSync pushes re-run provideGlance, so the snapshot refreshes with
+ * every store change, midnight tick, and app-resume sync.
+ */
+internal fun deviceRowsFor(
+    context: Context,
+    data: AppData,
+    day: java.time.LocalDate,
+): List<Pair<EventItem, Color>> {
+    val pf = data.prefs
+    if (!pf.deviceCalsEnabled || !DeviceCalendars.hasPermission(context)) return emptyList()
+    return DeviceCalendars.eventsBetween(context, day, day, pf.deviceCalIds)[day.toIso()]
+        .orEmpty()
+        .map { de ->
+            EventItem(
+                id = "device:${de.id}",
+                title = de.title,
+                date = de.date,
+                start = de.start,
+                end = de.end,
+                allDay = de.allDay,
+                cat = "",
+                remind = null,
+            ) to hexColor(de.colorHex)
+        }
+}
 
 internal fun launchIntent(context: Context, action: String? = null): Intent =
     Intent(context, MainActivity::class.java)

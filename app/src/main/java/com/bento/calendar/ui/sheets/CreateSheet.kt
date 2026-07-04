@@ -32,15 +32,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.bento.calendar.data.Priority
 import com.bento.calendar.data.parseQuickAdd
 import com.bento.calendar.ui.AppViewModel
 import com.bento.calendar.ui.Fmt
 import com.bento.calendar.ui.components.BentoSheet
 import com.bento.calendar.ui.components.BentoTextField
+import com.bento.calendar.ui.components.Dot
 import com.bento.calendar.ui.components.GBtn
 import com.bento.calendar.ui.components.tap
 import com.bento.calendar.ui.theme.BentoIcons
 import com.bento.calendar.ui.theme.LocalBento
+import com.bento.calendar.ui.theme.hexColor
 import java.time.LocalDate
 
 /**
@@ -119,6 +122,15 @@ private fun QuickAdd(vm: AppViewModel) {
                 if (parsed.isEvent) {
                     PreviewChip("${Fmt.time(parsed.start!!, use24h)}–${Fmt.time(parsed.end!!, use24h)}")
                 }
+                // Priority only persists on tasks (events have no priority
+                // field) — previewing it on an event would promise a flag
+                // that commitQuickAdd drops.
+                if (!parsed.isEvent && parsed.priority > 0) {
+                    PreviewChip(
+                        Priority.label(parsed.priority),
+                        dot = Priority.colorHex(parsed.priority)?.let { hexColor(it) },
+                    )
+                }
             }
         }
     }
@@ -131,16 +143,23 @@ private fun dateChipLabel(d: LocalDate, today: LocalDate): String = when (d) {
     else -> Fmt.dayShort(d)
 }
 
-/** Small readout pill under the quick-add field (same pill language as CategoryPills). */
+/**
+ * Small readout pill under the quick-add field (same pill language as
+ * CategoryPills). An optional [dot] color prefixes the label — the priority
+ * chip uses it with the flag tint from [Priority.colorHex].
+ */
 @Composable
-private fun PreviewChip(label: String, accent: Boolean = false) {
+private fun PreviewChip(label: String, accent: Boolean = false, dot: Color? = null) {
     val c = LocalBento.current
-    Box(
+    Row(
         Modifier
             .background(if (accent) c.accTint(0.12f) else c.inp, CircleShape)
             .border(1.dp, if (accent) c.acc else c.bd, CircleShape)
             .padding(horizontal = 10.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
+        if (dot != null) Dot(dot, size = 5.dp)
         Text(
             label,
             fontSize = 11.sp,

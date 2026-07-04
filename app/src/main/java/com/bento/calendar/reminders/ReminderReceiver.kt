@@ -12,9 +12,16 @@ import android.os.Build
 import com.bento.calendar.MainActivity
 import com.bento.calendar.R
 import com.bento.calendar.data.AppGraph
+import com.bento.calendar.data.Recur
+import com.bento.calendar.data.TaskItem
+import com.bento.calendar.data.completeTask
 import com.bento.calendar.data.occurrencesOn
+import com.bento.calendar.data.toDate
+import com.bento.calendar.data.toIso
 import com.bento.calendar.data.toTime
 import com.bento.calendar.ui.Fmt
+import com.bento.calendar.widget.WidgetActions
+import com.bento.calendar.widget.WidgetSync
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -29,10 +36,21 @@ class ReminderReceiver : BroadcastReceiver() {
     companion object {
         const val ACTION_SNOOZE = "com.bento.calendar.SNOOZE"
         const val ACTION_SHOW_SNOOZED = "com.bento.calendar.SHOW_SNOOZED"
+        const val ACTION_COMPLETE_TASK = "com.bento.calendar.COMPLETE_TASK"
         private const val EXTRA_TITLE = "title"
         private const val EXTRA_TEXT = "text"
         private const val EXTRA_NOTIF_ID = "notifId"
+        private const val EXTRA_TASK_ID = "taskId"
         private const val SNOOZE_MS = 10 * 60_000L
+
+        /**
+         * Task notification ids live in their own namespace: event ids are raw
+         * (id + date).hashCode()s, so forcing this bit on keeps the two
+         * families from (routinely) colliding on notification/requestCode ids.
+         */
+        private const val TASK_NOTIF_BIT = 0x40000000
+
+        private fun taskNotifId(taskId: String): Int = taskId.hashCode() or TASK_NOTIF_BIT
         private const val PREFS_NAME = "reminders"
         private const val KEY_PENDING_SNOOZES = "pendingSnoozes"
         /** Snoozes this far past due at restore time are dropped as stale. */
@@ -60,13 +78,14 @@ class ReminderReceiver : BroadcastReceiver() {
                 val fireAt = entry.optLong("fireAtMillis")
                 val title = entry.optString("title")
                 val text = entry.optString("text")
+                val taskId = entry.optString("taskId").takeIf { it.isNotEmpty() }
                 when {
                     fireAt > now -> {
-                        armSnoozeAlarm(context, notifId, title, text, fireAt)
+                        armSnoozeAlarm(context, notifId, title, text, taskId, fireAt)
                         keep.put(key, entry)
                     }
                     now - fireAt <= SNOOZE_STALE_MS ->
-                        nm?.notify(notifId, buildNotification(context, title, text, notifId))
+                        nm?.notify(notifId, buildNotification(context, title, text, notifId, taskId))
                     // else: too stale to be useful — drop.
                 }
             }
@@ -85,6 +104,7 @@ class ReminderReceiver : BroadcastReceiver() {
             notifId: Int,
             title: String?,
             text: String?,
+            taskId: String?,
             at: Long,
         ) {
             val am = context.getSystemService(AlarmManager::class.java) ?: return
@@ -95,6 +115,7 @@ class ReminderReceiver : BroadcastReceiver() {
                     .setAction(ACTION_SHOW_SNOOZED)
                     .putExtra(EXTRA_TITLE, title)
                     .putExtra(EXTRA_TEXT, text)
+                    .putExtra(EXTRA_TASK_ID, taskId)
                     .putExtra(EXTRA_NOTIF_ID, notifId),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
@@ -122,16 +143,25 @@ class ReminderReceiver : BroadcastReceiver() {
                 JSONObject()
             }
 
+        /**
+         * [taskId] != null marks a task reminder: the content tap deep-links to
+         * the Tasks tab (the widget action MainActivity already routes) and a
+         * "Done" action completes the task via [ACTION_COMPLETE_TASK]. The
+         * distinct action strings keep the Done/Snooze PendingIntents apart
+         * despite sharing notifId as requestCode (Intent.filterEquals).
+         */
         private fun buildNotification(
             context: Context,
             title: String,
             text: String,
             notifId: Int,
+            taskId: String? = null,
         ): Notification {
             val tapIntent = PendingIntent.getActivity(
                 context,
                 0,
-                Intent(context, MainActivity::class.java),
+                Intent(context, MainActivity::class.java)
+                    .apply { if (taskId != null) action = WidgetActions.OPEN_TASKS },
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
             val snoozeIntent = PendingIntent.getBroadcast(
@@ -141,6 +171,7 @@ class ReminderReceiver : BroadcastReceiver() {
                     .setAction(ACTION_SNOOZE)
                     .putExtra(EXTRA_TITLE, title)
                     .putExtra(EXTRA_TEXT, text)
+                    .putExtra(EXTRA_TASK_ID, taskId)
                     .putExtra(EXTRA_NOTIF_ID, notifId),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
@@ -149,14 +180,31 @@ class ReminderReceiver : BroadcastReceiver() {
                 "Snooze 10 min",
                 snoozeIntent,
             ).build()
-            return Notification.Builder(context, ReminderScheduler.CHANNEL_ID)
+            val builder = Notification.Builder(context, ReminderScheduler.CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_stat_bell)
                 .setContentTitle(title)
                 .setContentText(text)
                 .setContentIntent(tapIntent)
                 .setAutoCancel(true)
-                .addAction(snoozeAction)
-                .build()
+            if (taskId != null) {
+                val doneIntent = PendingIntent.getBroadcast(
+                    context,
+                    notifId,
+                    Intent(context, ReminderReceiver::class.java)
+                        .setAction(ACTION_COMPLETE_TASK)
+                        .putExtra(EXTRA_TASK_ID, taskId)
+                        .putExtra(EXTRA_NOTIF_ID, notifId),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                )
+                builder.addAction(
+                    Notification.Action.Builder(
+                        Icon.createWithResource(context, R.drawable.ic_stat_bell),
+                        "Done",
+                        doneIntent,
+                    ).build(),
+                )
+            }
+            return builder.addAction(snoozeAction).build()
         }
     }
 
@@ -168,6 +216,10 @@ class ReminderReceiver : BroadcastReceiver() {
             }
             ACTION_SHOW_SNOOZED -> {
                 showSnoozed(context, intent)
+                return
+            }
+            ACTION_COMPLETE_TASK -> {
+                handleCompleteTask(context, intent)
                 return
             }
         }
@@ -207,6 +259,26 @@ class ReminderReceiver : BroadcastReceiver() {
                             )
                         }
                     }
+                    // Same predicate as the scheduler: open tasks due this day
+                    // fire at their remindAt time.
+                    val iso = date.toIso()
+                    for (t in data.tasks) {
+                        val remindAt = t.remindAt ?: continue
+                        if (t.done || t.due != iso) continue
+                        val fireMin = toEpochMinutes(date.atTime(remindAt.toTime()))
+                        if (fireMin in (lastRun + 1)..windowEndMin) {
+                            val notifId = taskNotifId(t.id)
+                            val catLabel = t.cat.takeIf { it.isNotEmpty() }
+                                ?.let { data.categoryOf(it).label }
+                            nm.notify(
+                                notifId,
+                                buildTaskNotification(
+                                    context, t.title, t.id, catLabel, notifId,
+                                    date = date, now = now,
+                                ),
+                            )
+                        }
+                    }
                 }
                 prefs.edit().putLong("lastRunMin", windowEndMin).apply()
                 ReminderScheduler.reschedule(context, data)
@@ -229,6 +301,7 @@ class ReminderReceiver : BroadcastReceiver() {
         context.getSystemService(NotificationManager::class.java)?.cancel(notifId)
         val title = intent.getStringExtra(EXTRA_TITLE)
         val text = intent.getStringExtra(EXTRA_TEXT)
+        val taskId = intent.getStringExtra(EXTRA_TASK_ID)
         val at = System.currentTimeMillis() + SNOOZE_MS
         editPendingSnoozes(context) { map ->
             map.put(
@@ -236,15 +309,17 @@ class ReminderReceiver : BroadcastReceiver() {
                 JSONObject()
                     .put("fireAtMillis", at)
                     .put("title", title.orEmpty())
-                    .put("text", text.orEmpty()),
+                    .put("text", text.orEmpty())
+                    .put("taskId", taskId.orEmpty()),
             )
         }
-        armSnoozeAlarm(context, notifId, title, text, at)
+        armSnoozeAlarm(context, notifId, title, text, taskId, at)
     }
 
     /**
      * Snooze alarm fired: re-post the notification straight from the extras
      * (no data scan — the original text is already final), snoozable again.
+     * A snoozed task reminder keeps its taskId so "Done" survives the re-post.
      */
     private fun showSnoozed(context: Context, intent: Intent) {
         val notifId = intent.getIntExtra(EXTRA_NOTIF_ID, 0)
@@ -252,9 +327,76 @@ class ReminderReceiver : BroadcastReceiver() {
         editPendingSnoozes(context) { it.remove(notifId.toString()) }
         val title = intent.getStringExtra(EXTRA_TITLE) ?: return
         val text = intent.getStringExtra(EXTRA_TEXT) ?: ""
-        context.getSystemService(NotificationManager::class.java)
-            ?.notify(notifId, buildNotification(context, title, text, notifId))
+        val taskId = intent.getStringExtra(EXTRA_TASK_ID)
+        val nm = context.getSystemService(NotificationManager::class.java) ?: return
+        if (taskId == null) {
+            nm.notify(notifId, buildNotification(context, title, text, notifId, null))
+            return
+        }
+        // Task snoozes check the store first: re-nagging about a task the
+        // user completed in-app during the snooze window (with a live "Done"
+        // toggle attached) would be worse than staying quiet.
+        val pending = goAsync()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                runCatching {
+                    val data = AppGraph.repository(context).data.first()
+                    if (data.tasks.firstOrNull { it.id == taskId }.isActionable()) {
+                        nm.notify(notifId, buildNotification(context, title, text, notifId, taskId))
+                    }
+                }
+            } finally {
+                pending.finish()
+            }
+        }
     }
+
+    /**
+     * "Done" tapped on a task reminder: complete the task through the same
+     * [completeTask] path as the in-app checkbox and the Tasks widget
+     * (repeating tasks advance their due date instead of flipping done), then
+     * re-arm the chain off the new store and push the widget family.
+     */
+    private fun handleCompleteTask(context: Context, intent: Intent) {
+        val taskId = intent.getStringExtra(EXTRA_TASK_ID) ?: return
+        val notifId = intent.getIntExtra(EXTRA_NOTIF_ID, 0)
+        val pending = goAsync()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                runCatching {
+                    val updated = AppGraph.repository(context).update { x ->
+                        // The notification is a stale snapshot: if the task
+                        // was already completed in-app (done, or a repeating
+                        // task whose due advanced past today), a late "Done"
+                        // tap must be a no-op — completeTask is a toggle and
+                        // would reopen it or skip an occurrence.
+                        if (x.tasks.firstOrNull { it.id == taskId }.isActionable()) {
+                            completeTask(x, taskId, LocalDate.now())
+                        } else {
+                            x
+                        }
+                    }
+                    // Cancel only after the store write landed — the
+                    // notification is the user's only retry affordance. Stale
+                    // taps still clear it (the update was a deliberate no-op).
+                    context.getSystemService(NotificationManager::class.java)?.cancel(notifId)
+                    ReminderScheduler.reschedule(context, updated)
+                    WidgetSync.pushNow(context)
+                }
+            } finally {
+                pending.finish()
+            }
+        }
+    }
+
+    /**
+     * Whether a task reminder's Done tap (or a snoozed re-post) still means
+     * something: the task exists, isn't done, and — for repeating tasks —
+     * hasn't already had its due advanced past today by an in-app completion.
+     */
+    private fun TaskItem?.isActionable(): Boolean =
+        this != null && !done &&
+            (recur == Recur.NONE || due == null || !due.toDate().isAfter(LocalDate.now()))
 
     private fun toEpochMinutes(t: LocalDateTime): Long =
         t.atZone(java.time.ZoneId.systemDefault()).toEpochSecond() / 60
@@ -287,5 +429,26 @@ class ReminderReceiver : BroadcastReceiver() {
         }
         val text = whenText + if (loc.isNotEmpty()) " · $loc" else ""
         return buildNotification(context, title, text, notifId)
+    }
+
+    private fun buildTaskNotification(
+        context: Context,
+        title: String,
+        taskId: String,
+        catLabel: String?,
+        notifId: Int,
+        date: LocalDate,
+        now: LocalDateTime,
+    ): Notification {
+        // Task reminders fire ON the due date, but — like the all-day wording
+        // above — a late delivery can land the next day, so "today" is derived
+        // from the due date vs the actual delivery date.
+        val whenText = when (date) {
+            now.toLocalDate() -> "Task due today"
+            now.toLocalDate().plusDays(1) -> "Task due tomorrow"
+            else -> "Task due " + Fmt.dayShort(date)
+        }
+        val text = whenText + if (catLabel != null) " · $catLabel" else ""
+        return buildNotification(context, title, text, notifId, taskId)
     }
 }

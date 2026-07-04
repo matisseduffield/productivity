@@ -46,7 +46,9 @@ import com.bento.calendar.ui.theme.BentoColors
 import com.bento.calendar.ui.theme.DarkColors
 import com.bento.calendar.ui.theme.LightColors
 import com.bento.calendar.ui.theme.hexColor
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import java.time.LocalDate
 
 // Row budget (dp) for the reported widget size: fixed overhead is the card
@@ -80,15 +82,27 @@ class BentoWidget : GlanceAppWidget() {
         // live session only recompose (provideGlance is not re-run), so the
         // collected value — not a captured local — must be the source.
         val initial = repo.data.first()
+        // Device overlay snapshot for this provideGlance run; keyed to its own
+        // day so a midnight rollover inside a live session can't merge
+        // yesterday's rows. Glance 1.1.1 runs provideGlance on Main — the
+        // blocking resolver query must hop to IO or it janks the app.
+        val deviceDay = LocalDate.now()
+        val deviceRows = withContext(Dispatchers.IO) {
+            deviceRowsFor(context, initial, deviceDay)
+        }
         provideContent {
             val data by repo.data.collectAsState(initial)
             val today = LocalDate.now() // recomputed per recomposition, not frozen per session
             val c = if (data.prefs.theme == "light") LightColors else DarkColors
+            val rows = (
+                occurrencesOn(data.events, today).map { e ->
+                    e to catColor(data, e.cat)
+                } + if (today == deviceDay) deviceRows else emptyList()
+                ).sortedBy { it.first.start }
             WidgetBody(
                 context = context,
                 today = today,
-                events = occurrencesOn(data.events, today),
-                categories = data.categories,
+                events = rows,
                 openTasks = data.tasks.count { !it.done },
                 use24h = data.prefs.use24h,
                 c = c,
@@ -102,8 +116,8 @@ class BentoWidget : GlanceAppWidget() {
 private fun WidgetBody(
     context: Context,
     today: LocalDate,
-    events: List<EventItem>,
-    categories: List<Category>,
+    /** Bento occurrences and device-overlay rows, pre-tinted and sorted. */
+    events: List<Pair<EventItem, Color>>,
     openTasks: Int,
     use24h: Boolean,
     c: BentoColors,
@@ -162,13 +176,8 @@ private fun WidgetBody(
                 )
             }
         } else {
-            events.take(shown).forEach { e ->
-                // Same fallback chain as AppData.categoryOf: orphaned ids from
-                // deleted categories never crash the widget.
-                val cat = categories.firstOrNull { it.id == e.cat }
-                    ?: categories.firstOrNull()
-                    ?: Cats.DEFAULTS[0]
-                EventRow(e, hexColor(cat.colorHex), use24h, c)
+            events.take(shown).forEach { (e, tint) ->
+                EventRow(e, tint, use24h, c)
             }
             if (events.size > shown) {
                 Text(
@@ -195,8 +204,17 @@ private fun EventRow(e: EventItem, dotColor: Color, use24h: Boolean, c: BentoCol
         modifier = GlanceModifier.fillMaxWidth().padding(vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // Multi-day segments carry sentinel times (first day ends 23:59,
+        // last day starts 00:00) — arrows read better than the sentinels,
+        // matching the in-app agenda language.
+        val spanSeg = e.endDate != null && !e.allDay
         Text(
-            if (e.allDay) "All day" else Fmt.time(e.start, use24h),
+            when {
+                e.allDay -> "All day"
+                spanSeg && e.start == "00:00" -> "→ ${Fmt.time(e.end, use24h)}"
+                spanSeg && e.end == "23:59" -> "${Fmt.time(e.start, use24h)} →"
+                else -> Fmt.time(e.start, use24h)
+            },
             style = TextStyle(color = ColorProvider(c.sub), fontSize = 11.sp),
             modifier = GlanceModifier.width(56.dp),
             maxLines = 1,
