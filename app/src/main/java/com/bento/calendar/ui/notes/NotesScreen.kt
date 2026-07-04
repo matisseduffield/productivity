@@ -22,6 +22,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -37,6 +38,8 @@ import com.bento.calendar.ui.Fmt
 import com.bento.calendar.ui.components.EmptyText
 import com.bento.calendar.ui.components.GBtn
 import com.bento.calendar.ui.components.SectionLabel
+import com.bento.calendar.ui.components.SwipeAction
+import com.bento.calendar.ui.components.SwipeActionRow
 import com.bento.calendar.ui.components.hairlineBottom
 import com.bento.calendar.ui.components.tap
 import com.bento.calendar.ui.theme.BentoIcons
@@ -122,11 +125,30 @@ fun NotesScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 count = if (others.isEmpty()) "—" else others.size.toString(),
             )
             others.forEach { n ->
-                NoteRow(
-                    note = n,
-                    stamp = Fmt.editStamp(n.updated, today, data.prefs.use24h),
-                    onTap = { vm.openNote(n.id) },
-                )
+                // key() so swipe state stays with the note, not the slot.
+                key(n.id) {
+                    SwipeActionRow(
+                        // Swipe right: pin/unpin without opening — works for locked notes too.
+                        right = SwipeAction(
+                            icon = BentoIcons.PinTack,
+                            tint = c.acc,
+                            onTrigger = { vm.toggleNotePinById(n.id) },
+                        ),
+                        // Swipe left: delete — but never for locked notes; deleting those
+                        // still requires unlocking via the editor (content protection).
+                        left = if (n.locked) null else SwipeAction(
+                            icon = BentoIcons.Trash,
+                            tint = c.dng,
+                            onTrigger = { vm.deleteNoteBySwipe(n) },
+                        ),
+                    ) {
+                        NoteRow(
+                            note = n,
+                            stamp = Fmt.editStamp(n.updated, today, data.prefs.use24h),
+                            onTap = { vm.openNote(n.id) },
+                        )
+                    }
+                }
             }
 
             if (data.notes.isEmpty()) {
@@ -216,6 +238,9 @@ private fun NoteRow(note: NoteItem, stamp: String, onTap: () -> Unit) {
         Modifier
             .fillMaxWidth()
             .tap(onClick = onTap)
+            // Solid bg so the swipe-action icon is hidden until the row slides;
+            // the hairline stays inside the sliding content, drawn over the bg.
+            .background(c.bg)
             .hairlineBottom(c.line)
             .padding(horizontal = 2.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,

@@ -1,5 +1,12 @@
 package com.bento.calendar.ui.calendar
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -32,6 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,7 +52,10 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -78,8 +89,48 @@ import java.time.LocalDateTime
 import java.time.YearMonth
 import kotlin.math.floor
 
+/**
+ * Identity of the PERIOD being rendered (month start / week start / day), used
+ * as the [AnimatedContent] target so the exiting content keeps drawing the OLD
+ * period while it slides away. Deliberately excludes the day selection: tapping
+ * a day pill or month cell must not re-animate the whole view.
+ */
+private data class CalTarget(val view: CalView, val periodStart: LocalDate)
+
 @Composable
 fun CalendarScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
+    val scrollState = rememberScrollState()
+    val density = LocalDensity.current
+
+    // Landing on today's Day view (or the current week's Week view) auto-
+    // scrolls so the now-line sits comfortably in view; Month resets to top.
+    // Keyed on the explicit nav tick, NOT raw selDate — selecting a day with
+    // a header pill or month cell must never hijack the scroll position.
+    LaunchedEffect(vm.calNavTick) {
+        val today = now.toLocalDate()
+        val nowMin = now.hour * 60 + now.minute
+        when (vm.calView) {
+            CalView.Month -> scrollState.animateScrollTo(0)
+            CalView.Week -> {
+                val ws = startOfWeek(vm.selDate, data.prefs.monday)
+                if (today >= ws && today <= ws.plusDays(6) && nowMin in 420..1320) {
+                    // 07:00 grid at 44dp/hour, ~160dp headroom above the line.
+                    val targetDp = ((nowMin - 420) / 60f) * 44f - 160f
+                    val target = with(density) { targetDp.dp.toPx() }.toInt().coerceAtLeast(0)
+                    scrollState.animateScrollTo(target)
+                }
+            }
+            CalView.Day -> {
+                if (vm.selDate == today && nowMin in 360..1380) {
+                    // 06:00 grid at 56dp/hour, ~160dp headroom above the line.
+                    val targetDp = ((nowMin - 360) / 60f) * 56f - 160f
+                    val target = with(density) { targetDp.dp.toPx() }.toInt().coerceAtLeast(0)
+                    scrollState.animateScrollTo(target)
+                }
+            }
+        }
+    }
+
     Column(Modifier.fillMaxSize()) {
         CalendarHeader(vm, data)
         Column(
@@ -101,14 +152,40 @@ fun CalendarScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                         },
                     ) { _, dragAmount -> total += dragAmount }
                 }
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scrollState)
                 .padding(start = 18.dp, end = 18.dp, top = 2.dp, bottom = 14.dp),
         ) {
             SegmentedControl(vm)
-            when (vm.calView) {
-                CalView.Month -> MonthView(vm, data, now)
-                CalView.Week -> WeekView(vm, data, now)
-                CalView.Day -> DayView(vm, data, now)
+            // Next/prev slides in the swipe direction; jumps (Today chip, date
+            // picker, view switch) crossfade. calNavDir is set by the vm on
+            // every navigation, so the spec just reads it.
+            AnimatedContent(
+                targetState = when (vm.calView) {
+                    CalView.Month -> CalTarget(CalView.Month, vm.cursor.atDay(1))
+                    CalView.Week -> CalTarget(CalView.Week, startOfWeek(vm.selDate, data.prefs.monday))
+                    CalView.Day -> CalTarget(CalView.Day, vm.selDate)
+                },
+                transitionSpec = {
+                    val dir = vm.calNavDir
+                    if (dir == 0) {
+                        fadeIn(tween(220)) togetherWith fadeOut(tween(120))
+                    } else {
+                        (slideInHorizontally(tween(260)) { full -> full * dir } + fadeIn(tween(200))) togetherWith
+                            (slideOutHorizontally(tween(260)) { full -> -full * dir } + fadeOut(tween(160)))
+                    }
+                },
+                label = "calPeriod",
+            ) { target ->
+                // AnimatedContent stacks bare children like a Box; the views
+                // emit sibling rows, so restore the vertical flow explicitly.
+                // Day selection reads live vm state — same target, no animation.
+                Column(Modifier.fillMaxWidth()) {
+                    when (target.view) {
+                        CalView.Month -> MonthView(vm, data, now, YearMonth.from(target.periodStart), vm.selDate)
+                        CalView.Week -> WeekView(vm, data, now, target.periodStart)
+                        CalView.Day -> DayView(vm, data, now, target.periodStart)
+                    }
+                }
             }
         }
     }
@@ -318,7 +395,13 @@ private fun NowLine(y: Dp) {
 // ---- Month view ----
 
 @Composable
-private fun MonthView(vm: AppViewModel, data: AppData, now: LocalDateTime) {
+private fun MonthView(
+    vm: AppViewModel,
+    data: AppData,
+    now: LocalDateTime,
+    cursor: YearMonth,
+    selDate: LocalDate,
+) {
     val c = LocalBento.current
     val today = now.toLocalDate()
     val monday = data.prefs.monday
@@ -338,21 +421,21 @@ private fun MonthView(vm: AppViewModel, data: AppData, now: LocalDateTime) {
         }
     }
     // 6x7 grid of 42 cells starting at the week containing the 1st.
-    val gs = startOfWeek(vm.cursor.atDay(1), monday)
+    val gs = startOfWeek(cursor.atDay(1), monday)
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         for (r in 0..5) {
             Row(Modifier.fillMaxWidth()) {
                 for (col in 0..6) {
                     val date = gs.plusDays((r * 7 + col).toLong())
-                    MonthCell(vm, data, date, today, Modifier.weight(1f))
+                    MonthCell(vm, data, date, today, cursor, selDate, Modifier.weight(1f))
                 }
             }
         }
     }
     // Agenda for the selected day.
-    val selEvs = occurrencesOn(data.events, vm.selDate)
+    val selEvs = occurrencesOn(data.events, selDate)
     SectionLabel(
-        Fmt.dayShort(vm.selDate),
+        Fmt.dayShort(selDate),
         count = when {
             selEvs.isEmpty() -> "no events"
             selEvs.size == 1 -> "1 event"
@@ -372,11 +455,14 @@ private fun MonthCell(
     data: AppData,
     date: LocalDate,
     today: LocalDate,
+    cursor: YearMonth,
+    selDate: LocalDate,
     modifier: Modifier,
 ) {
     val c = LocalBento.current
-    val inMonth = YearMonth.from(date) == vm.cursor
-    val selected = date == vm.selDate
+    val haptics = LocalHapticFeedback.current
+    val inMonth = YearMonth.from(date) == cursor
+    val selected = date == selDate
     val shape = RoundedCornerShape(13.dp)
     val cats = occurrencesOn(data.events, date).map { Cats.of(it.cat) }.distinct().take(3)
     Column(
@@ -387,7 +473,17 @@ private fun MonthCell(
                 if (selected) Modifier.background(c.tile, shape).border(1.dp, c.bd, shape)
                 else Modifier
             )
-            .tap { vm.tapMonthCell(date) }
+            // Tap selects (tap again for Day view); long-press quick-creates
+            // an event that day at 09:00 with the user's default duration.
+            .pointerInput(date) {
+                detectTapGestures(
+                    onTap = { vm.tapMonthCell(date) },
+                    onLongPress = {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        vm.newEventAt(date, 540)
+                    },
+                )
+            }
             .padding(top = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -448,12 +544,14 @@ private fun AgendaRow(vm: AppViewModel, data: AppData, e: EventItem) {
 // ---- Week view ----
 
 @Composable
-private fun WeekView(vm: AppViewModel, data: AppData, now: LocalDateTime) {
+private fun WeekView(vm: AppViewModel, data: AppData, now: LocalDateTime, weekStart: LocalDate) {
     val c = LocalBento.current
     val today = now.toLocalDate()
     val nowMin = now.hour * 60 + now.minute
     val use24h = data.prefs.use24h
-    val ws = startOfWeek(vm.selDate, data.prefs.monday)
+    // The week identity comes in as a parameter (already normalized to the
+    // week start); the SELECTED day is read live so pill taps don't animate.
+    val ws = weekStart
 
     // Day header row (offset by the 34dp hour gutter).
     Row(Modifier.fillMaxWidth().padding(top = 12.dp, start = 34.dp)) {
@@ -507,7 +605,7 @@ private fun WeekView(vm: AppViewModel, data: AppData, now: LocalDateTime) {
             Box(
                 Modifier
                     .matchParentSize()
-                    .pointerInput(data.prefs.monday, vm.selDate) {
+                    .pointerInput(weekStart) {
                         detectTapGestures { off ->
                             val day = floor(off.x / size.width * 7f).toInt().coerceIn(0, 6)
                             val hour = floor(off.y / 44.dp.toPx()).toInt().coerceIn(0, 14)
@@ -551,12 +649,11 @@ private fun WeekView(vm: AppViewModel, data: AppData, now: LocalDateTime) {
 // ---- Day view ----
 
 @Composable
-private fun DayView(vm: AppViewModel, data: AppData, now: LocalDateTime) {
+private fun DayView(vm: AppViewModel, data: AppData, now: LocalDateTime, selDate: LocalDate) {
     val c = LocalBento.current
     val today = now.toLocalDate()
     val nowMin = now.hour * 60 + now.minute
     val use24h = data.prefs.use24h
-    val selDate = vm.selDate
 
     // Grid: 44dp gutter + 06:00-23:00 column (17h x 56dp = 952dp).
     Row(Modifier.fillMaxWidth().padding(top = 8.dp)) {
@@ -591,6 +688,9 @@ private fun DayView(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                     },
             )
             occurrencesOn(data.events, selDate).forEach { e ->
+                // Skip events entirely outside the 06:00-23:00 grid — clamping
+                // alone would draw phantom min-height blocks at the edges.
+                if (e.end.toMins() <= 360 || e.start.toMins() >= 1380) return@forEach
                 val s = maxOf(e.start.toMins(), 360)
                 val en = minOf(e.end.toMins(), 1380)
                 Column(

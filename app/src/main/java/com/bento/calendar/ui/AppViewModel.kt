@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.bento.calendar.data.AppData
@@ -232,11 +233,31 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             searchOpen || openNoteId != null || settingsOpen
 
     // ---- Calendar ----
+
+    /**
+     * Direction of the last period navigation for the slide animation:
+     * +1 = forward (next), -1 = backward (prev), 0 = jump (no slide, fade).
+     */
+    var calNavDir by mutableStateOf(0)
+        private set
+
+    /**
+     * Increments on every real period/view navigation (not on day-selection
+     * taps) — the scroll-to-now effect keys on this so selecting a day never
+     * hijacks the scroll position.
+     */
+    var calNavTick by mutableStateOf(0)
+        private set
+
     fun setCalView(v: CalView) {
+        calNavDir = 0
+        calNavTick++
         calViewState = v
     }
 
     fun calPrev() {
+        calNavDir = -1
+        calNavTick++
         when (calView) {
             CalView.Month -> cursor = cursor.minusMonths(1)
             CalView.Week -> selDate = selDate.minusDays(7)
@@ -245,6 +266,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun calNext() {
+        calNavDir = 1
+        calNavTick++
         when (calView) {
             CalView.Month -> cursor = cursor.plusMonths(1)
             CalView.Week -> selDate = selDate.plusDays(7)
@@ -253,13 +276,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun goToday() {
+        calNavDir = 0
+        calNavTick++
         selDate = today()
         cursor = YearMonth.from(today())
     }
 
     /** Month cell: tap selects, tapping the selected day opens Day view. */
     fun tapMonthCell(date: LocalDate) {
+        calNavDir = 0
         if (selDate == date) {
+            // Second tap opens Day view — that's a navigation.
+            calNavTick++
             calViewState = CalView.Day
         } else {
             selDate = date
@@ -269,17 +297,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Week header day tap. */
     fun selectDate(date: LocalDate) {
+        calNavDir = 0
         selDate = date
     }
 
     /** Header-title date picker: jump straight to a date in the current view. */
     fun jumpToDate(date: LocalDate) {
+        calNavDir = 0
+        calNavTick++
         selDate = date
         cursor = YearMonth.from(date)
     }
 
     /** Today-tab week strip: jump to Day view of that date. */
     fun weekStripTap(date: LocalDate) {
+        calNavDir = 0
+        calNavTick++
         tabState = Tab.Calendar
         calViewState = CalView.Day
         selDate = date
@@ -445,6 +478,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun clearCompleted() {
         if (data.value?.tasks?.none { it.done } != false) return
         twoTap(Arm.CLEAR) {
+            dismissUndo()
             mut { x -> x.copy(tasks = x.tasks.filter { !it.done }) }
         }
     }
@@ -630,6 +664,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         twoTap(Arm.RESET) {
             // "Erase all events, tasks and notes" — keep theme, prefs and PIN,
             // which the label doesn't claim to touch.
+            dismissUndo()
             mut { it.copy(events = emptyList(), tasks = emptyList(), notes = emptyList()) }
             unlocked = emptySet()
             openNoteId = null
@@ -655,6 +690,130 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // ---- Reminder banner ----
     fun dismissReminder(key: String) {
         dismissed = dismissed + key
+    }
+
+    // ---- Swipe actions & undo ----
+
+    data class UndoState(val label: String)
+
+    /** Non-null while undoable swipe actions can be reverted (~4s window). */
+    var undoState by mutableStateOf<UndoState?>(null)
+        private set
+    private var undoJob: Job? = null
+
+    /** Successive swipes within the window batch into one undo. */
+    private val pendingRestores = mutableListOf<(AppData) -> AppData>()
+    private var undoTaskCount = 0
+    private var undoNoteCount = 0
+    private var overlayWatcherStarted = false
+
+    /**
+     * Pause the undo countdown while any overlay/sheet covers the banner, so
+     * the window can't expire unreachable behind a scrim. Started lazily from
+     * offerUndo — by then every state property is initialized.
+     */
+    private fun ensureOverlayWatcher() {
+        if (overlayWatcherStarted) return
+        overlayWatcherStarted = true
+        viewModelScope.launch {
+            snapshotFlow { hasOverlay() }.collect { covered ->
+                if (covered) {
+                    undoJob?.cancel()
+                } else if (undoState != null) {
+                    undoJob?.cancel()
+                    undoJob = viewModelScope.launch {
+                        delay(4000)
+                        clearUndo()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun offerUndo(kind: String, restore: (AppData) -> AppData) {
+        ensureOverlayWatcher()
+        pendingRestores += restore
+        if (kind == "task") undoTaskCount++ else undoNoteCount++
+        val label = when {
+            undoTaskCount > 0 && undoNoteCount > 0 -> "${undoTaskCount + undoNoteCount} items deleted"
+            undoTaskCount > 1 -> "$undoTaskCount tasks deleted"
+            undoNoteCount > 1 -> "$undoNoteCount notes deleted"
+            undoTaskCount == 1 -> "Task deleted"
+            else -> "Note deleted"
+        }
+        undoState = UndoState(label)
+        undoJob?.cancel()
+        undoJob = viewModelScope.launch {
+            delay(4000)
+            clearUndo()
+        }
+    }
+
+    private fun clearUndo() {
+        undoState = null
+        pendingRestores.clear()
+        undoTaskCount = 0
+        undoNoteCount = 0
+    }
+
+    fun performUndo() {
+        if (undoState == null) return
+        val restores = pendingRestores.toList()
+        undoJob?.cancel()
+        clearUndo()
+        // Reverse order: each restore's captured index is valid in the list
+        // state that existed just after the LATER deletions were captured.
+        mut { d -> restores.foldRight(d) { r, acc -> r(acc) } }
+    }
+
+    fun dismissUndo() {
+        undoJob?.cancel()
+        clearUndo()
+    }
+
+    /** Swipe-left on a task row: delete with undo, restored at its old spot. */
+    fun deleteTaskBySwipe(t: TaskItem) {
+        val idx = data.value?.tasks?.indexOfFirst { it.id == t.id } ?: -1
+        mut { x -> x.copy(tasks = x.tasks.filter { it.id != t.id }) }
+        offerUndo("task") { x ->
+            if (x.tasks.any { it.id == t.id }) {
+                x
+            } else {
+                x.copy(
+                    tasks = if (idx < 0) {
+                        x.tasks + t
+                    } else {
+                        x.tasks.toMutableList().apply { add(idx.coerceAtMost(size), t) }
+                    },
+                )
+            }
+        }
+    }
+
+    /** Swipe-left on an (unlocked) note row: delete with undo. */
+    fun deleteNoteBySwipe(n: NoteItem) {
+        val idx = data.value?.notes?.indexOfFirst { it.id == n.id } ?: -1
+        mut { x -> x.copy(notes = x.notes.filter { it.id != n.id }) }
+        offerUndo("note") { x ->
+            if (x.notes.any { it.id == n.id }) {
+                x
+            } else {
+                x.copy(
+                    notes = if (idx < 0) {
+                        x.notes + n
+                    } else {
+                        x.notes.toMutableList().apply { add(idx.coerceAtMost(size), n) }
+                    },
+                )
+            }
+        }
+    }
+
+    /** Swipe-right on a note row: pin/unpin without opening it. */
+    fun toggleNotePinById(id: String) {
+        mut { x ->
+            x.copy(notes = x.notes.map { if (it.id == id) it.copy(pinned = !it.pinned) else it })
+        }
     }
 
     // ---- App updates ----

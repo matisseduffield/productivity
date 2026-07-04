@@ -7,6 +7,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -39,6 +40,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.Icon
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Surface
@@ -56,8 +58,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
@@ -85,6 +89,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneOffset
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /** Press feedback on all tappables: scale to 0.92 over 150ms, no ripple. */
@@ -183,6 +188,7 @@ fun BentoCheckbox(
     corner: Dp = 8.dp,
 ) {
     val c = LocalBento.current
+    val haptics = LocalHapticFeedback.current
     val scale = remember { Animatable(1f) }
     LaunchedEffect(checked) {
         if (checked) {
@@ -198,7 +204,10 @@ fun BentoCheckbox(
                 scaleX = scale.value
                 scaleY = scale.value
             }
-            .tap(onClick = onToggle)
+            .tap {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onToggle()
+            }
             .background(if (checked) c.acc else Color.Transparent, RoundedCornerShape(corner))
             .border(1.5.dp, if (checked) c.acc else c.cbb, RoundedCornerShape(corner)),
         contentAlignment = Alignment.Center,
@@ -597,6 +606,163 @@ fun BentoTimeField(
                 }
             }
         }
+    }
+}
+
+/** One side of a [SwipeActionRow]: icon revealed behind the row + the action. */
+data class SwipeAction(
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val tint: Color,
+    val onTrigger: () -> Unit,
+)
+
+/**
+ * Row wrapper with horizontal swipe actions: drag right to reveal/trigger
+ * [right] (e.g. complete/pin, accent), drag left for [left] (e.g. delete,
+ * danger). Haptic tick when the trigger threshold is crossed; the row springs
+ * back after release. Sides without an action don't move.
+ */
+@Composable
+fun SwipeActionRow(
+    modifier: Modifier = Modifier,
+    right: SwipeAction? = null,
+    left: SwipeAction? = null,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    val haptics = LocalHapticFeedback.current
+    val view = androidx.compose.ui.platform.LocalView.current
+    var offsetX by remember { mutableFloatStateOf(0f) }
+    val settle = remember { Animatable(0f) }
+    var settleJob by remember { mutableStateOf<Job?>(null) }
+    var crossed by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val thresholdPx = with(LocalDensity.current) { 84.dp.toPx() }
+    val maxReachPx = with(LocalDensity.current) { 120.dp.toPx() }
+    val currentRight by rememberUpdatedState(right)
+    val currentLeft by rememberUpdatedState(left)
+
+    Box(modifier.fillMaxWidth()) {
+        // Revealed action icons behind the row.
+        if (offsetX > 0f && right != null) {
+            Icon(
+                right.icon,
+                contentDescription = null,
+                tint = right.tint.copy(alpha = (offsetX / thresholdPx).coerceIn(0.25f, 1f)),
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 10.dp)
+                    .size(20.dp),
+            )
+        }
+        if (offsetX < 0f && left != null) {
+            Icon(
+                left.icon,
+                contentDescription = null,
+                tint = left.tint.copy(alpha = (-offsetX / thresholdPx).coerceIn(0.25f, 1f)),
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 10.dp)
+                    .size(20.dp),
+            )
+        }
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .offset { IntOffset(offsetX.roundToInt(), 0) }
+                .pointerInput(right != null, left != null) {
+                    detectHorizontalDragGestures(
+                        onDragStart = {
+                            settleJob?.cancel()
+                            crossed = false
+                        },
+                        onDragEnd = {
+                            val r = currentRight
+                            val l = currentLeft
+                            when {
+                                offsetX >= thresholdPx && r != null -> r.onTrigger()
+                                offsetX <= -thresholdPx && l != null -> l.onTrigger()
+                            }
+                            val from = offsetX
+                            settleJob = scope.launch {
+                                settle.snapTo(from)
+                                settle.animateTo(0f, tween(220)) { offsetX = value }
+                            }
+                        },
+                        onDragCancel = {
+                            val from = offsetX
+                            settleJob = scope.launch {
+                                settle.snapTo(from)
+                                settle.animateTo(0f, tween(220)) { offsetX = value }
+                            }
+                        },
+                    ) { _, dx ->
+                        val lo = if (currentLeft != null) -maxReachPx else 0f
+                        val hi = if (currentRight != null) maxReachPx else 0f
+                        offsetX = (offsetX + dx).coerceIn(lo, hi)
+                        // Threshold haptic with hysteresis: arm on cross, only
+                        // re-arm below 70% so the boundary doesn't buzz-storm.
+                        val over = abs(offsetX) >= thresholdPx
+                        if (over && !crossed) {
+                            crossed = true
+                            if (android.os.Build.VERSION.SDK_INT >= 34) {
+                                view.performHapticFeedback(
+                                    android.view.HapticFeedbackConstants.GESTURE_THRESHOLD_ACTIVATE,
+                                )
+                            } else {
+                                view.performHapticFeedback(
+                                    android.view.HapticFeedbackConstants.CONTEXT_CLICK,
+                                )
+                            }
+                        } else if (crossed && abs(offsetX) < thresholdPx * 0.7f) {
+                            crossed = false
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        }
+                    }
+                },
+            content = content,
+        )
+    }
+}
+
+/**
+ * Floating "Task deleted · Undo" pill shown above the tab bar while a swipe
+ * action can be reverted.
+ */
+@Composable
+fun UndoBanner(label: String, onUndo: () -> Unit, modifier: Modifier = Modifier) {
+    val c = LocalBento.current
+    val enter = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { enter.animateTo(1f, tween(220)) }
+    Row(
+        modifier
+            .graphicsLayer {
+                alpha = enter.value
+                translationY = (1f - enter.value) * 16.dp.toPx()
+            }
+            .background(c.tile, RoundedCornerShape(14.dp))
+            .border(1.dp, c.bd, RoundedCornerShape(14.dp))
+            .padding(start = 16.dp, end = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(
+            label,
+            fontSize = 12.5.sp,
+            fontWeight = FontWeight.W500,
+            color = c.tx,
+            modifier = Modifier.padding(vertical = 12.dp),
+        )
+        // Clickable wraps the padding so the whole padded area is tappable
+        // (~48dp target); the label area is inert — expiry handles dismissal.
+        Text(
+            "Undo",
+            fontSize = 12.5.sp,
+            fontWeight = FontWeight.W700,
+            color = c.acc,
+            modifier = Modifier
+                .pressable(onClick = onUndo)
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+        )
     }
 }
 

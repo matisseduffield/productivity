@@ -87,6 +87,21 @@ fun AppRoot(vm: AppViewModel) {
                 }
                 TabBar(vm)
             }
+            // Undo pill for swipe actions, floating just above the tab bar.
+            // key(undo) replays the entrance when the batch label changes so
+            // each additional swipe is visibly acknowledged.
+            vm.undoState?.let { undo ->
+                androidx.compose.runtime.key(undo) {
+                    com.bento.calendar.ui.components.UndoBanner(
+                        label = undo.label,
+                        onUndo = { vm.performUndo() },
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .navigationBarsPadding()
+                            .padding(bottom = 88.dp),
+                    )
+                }
+            }
             // Overlay stack, prototype z-order: full-page overlays, then search,
             // then bottom sheets on top.
             if (vm.openNoteId != null) NoteEditorOverlay(vm, d, now)

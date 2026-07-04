@@ -20,6 +20,7 @@ import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
@@ -41,6 +42,8 @@ import com.bento.calendar.ui.components.Dot
 import com.bento.calendar.ui.components.EmptyText
 import com.bento.calendar.ui.components.GBtn
 import com.bento.calendar.ui.components.SectionLabel
+import com.bento.calendar.ui.components.SwipeAction
+import com.bento.calendar.ui.components.SwipeActionRow
 import com.bento.calendar.ui.components.hairlineBottom
 import com.bento.calendar.ui.components.tap
 import com.bento.calendar.ui.taskSections
@@ -100,14 +103,19 @@ fun TasksScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 val n = section.tasks.size
                 SectionLabel(section.label, count = "$n " + if (n == 1) "task" else "tasks")
                 section.tasks.forEach { t ->
-                    TaskRow(
-                        task = t,
-                        todayIso = todayIso,
-                        today = today,
-                        showExtras = true,
-                        onToggle = { vm.toggleTask(t.id) },
-                        onOpen = { vm.openTask(t) },
-                    )
+                    // key() so swipe state stays with the task, not the slot —
+                    // otherwise the next row inherits a mid-settle offset.
+                    key(t.id) {
+                        TaskRow(
+                            task = t,
+                            todayIso = todayIso,
+                            today = today,
+                            showExtras = true,
+                            onToggle = { vm.toggleTask(t.id) },
+                            onOpen = { vm.openTask(t) },
+                            onDelete = { vm.deleteTaskBySwipe(t) },
+                        )
+                    }
                 }
             }
 
@@ -146,14 +154,17 @@ fun TasksScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 }
                 if (vm.doneOpen) {
                     doneTasks.forEach { t ->
-                        TaskRow(
-                            task = t,
-                            todayIso = todayIso,
-                            today = today,
-                            showExtras = false,
-                            onToggle = { vm.toggleTask(t.id) },
-                            onOpen = { vm.openTask(t) },
-                        )
+                        key(t.id) {
+                            TaskRow(
+                                task = t,
+                                todayIso = todayIso,
+                                today = today,
+                                showExtras = false,
+                                onToggle = { vm.toggleTask(t.id) },
+                                onOpen = { vm.openTask(t) },
+                                onDelete = { vm.deleteTaskBySwipe(t) },
+                            )
+                        }
                     }
                 }
             }
@@ -163,7 +174,9 @@ fun TasksScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
 
 /**
  * Task list row (.trow): checkbox, title, then (open rows only) category dot
- * and due chip. Done rows are struck through and faint.
+ * and due chip. Done rows are struck through and faint. Wrapped in a
+ * [SwipeActionRow]: swipe right to toggle done, swipe left to delete (with
+ * undo via the AppRoot banner).
  */
 @Composable
 private fun TaskRow(
@@ -173,50 +186,57 @@ private fun TaskRow(
     showExtras: Boolean,
     onToggle: () -> Unit,
     onOpen: () -> Unit,
+    onDelete: () -> Unit,
 ) {
     val c = LocalBento.current
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .hairlineBottom(c.line)
-            .padding(horizontal = 2.dp, vertical = 11.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    SwipeActionRow(
+        right = SwipeAction(BentoIcons.Check, tint = c.acc, onTrigger = onToggle),
+        left = SwipeAction(BentoIcons.Trash, tint = c.dng, onTrigger = onDelete),
     ) {
-        BentoCheckbox(checked = task.done, onToggle = onToggle, size = 22.dp, corner = 8.dp)
-        Text(
-            task.title,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.W500,
-            color = if (task.done) c.faint else c.tx,
-            textDecoration = if (task.done) TextDecoration.LineThrough else null,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .weight(1f)
-                .tap(onClick = onOpen),
-        )
-        if (showExtras) {
-            if (task.cat.isNotEmpty()) {
-                Dot(Cats.of(task.cat).color)
-            }
-            val due = task.due
-            if (due != null && !task.done) {
-                val overdue = due < todayIso
-                Box(
-                    Modifier.background(
-                        if (overdue) c.dng else c.inp,
-                        RoundedCornerShape(8.dp),
-                    ),
-                ) {
-                    Text(
-                        Fmt.dueLabel(due, today),
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.W700,
-                        color = if (overdue) Color.White else c.sub,
-                        style = LocalTextStyle.current.copy(fontFeatureSettings = "tnum"),
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                    )
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .background(c.bg)
+                .hairlineBottom(c.line)
+                .padding(horizontal = 2.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            BentoCheckbox(checked = task.done, onToggle = onToggle, size = 22.dp, corner = 8.dp)
+            Text(
+                task.title,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.W500,
+                color = if (task.done) c.faint else c.tx,
+                textDecoration = if (task.done) TextDecoration.LineThrough else null,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .weight(1f)
+                    .tap(onClick = onOpen),
+            )
+            if (showExtras) {
+                if (task.cat.isNotEmpty()) {
+                    Dot(Cats.of(task.cat).color)
+                }
+                val due = task.due
+                if (due != null && !task.done) {
+                    val overdue = due < todayIso
+                    Box(
+                        Modifier.background(
+                            if (overdue) c.dng else c.inp,
+                            RoundedCornerShape(8.dp),
+                        ),
+                    ) {
+                        Text(
+                            Fmt.dueLabel(due, today),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.W700,
+                            color = if (overdue) Color.White else c.sub,
+                            style = LocalTextStyle.current.copy(fontFeatureSettings = "tnum"),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        )
+                    }
                 }
             }
         }
