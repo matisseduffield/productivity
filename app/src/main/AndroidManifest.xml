@@ -45,6 +45,24 @@
             android:exported="false" />
 
         <receiver
+            android:name=".widget.BentoWidgetReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/bento_widget_info" />
+        </receiver>
+
+        <!-- Widget date rollover: one-shot alarm re-armed for each next local
+             midnight while a widget is placed (see BentoWidgetReceiver). -->
+        <receiver
+            android:name=".widget.MidnightTickReceiver"
+            android:exported="false" />
+
+
+        <receiver
             android:name=".reminders.BootReceiver"
             android:exported="true">
             <intent-filter>

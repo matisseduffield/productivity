@@ -106,17 +106,21 @@ class MainActivity : ComponentActivity() {
         vm.checkForUpdates()
         // Only on a genuinely fresh launch: on recreation (rotation, theme
         // change) getIntent() still carries the old shortcut action and would
-        // clobber an in-progress draft with a blank one.
+        // re-fire it — reopening a dismissed editor or spawning another note.
         if (savedInstanceState == null) handleShortcutAction(intent)
     }
 
     /**
-     * The platform forces NEW_TASK|CLEAR_TASK on static shortcut intents, so a
-     * shortcut tap always tears down the task and is handled by the onCreate
-     * path (savedInstanceState == null) — it never lands here. Today this only
-     * receives the action-less reminder-notification tap intent, for which
-     * handleShortcutAction is a no-op; it is kept for future non-shortcut
-     * intents. setIntent keeps getIntent() fresh for later recreations.
+     * Receives action-carrying intents when the singleTask activity is warm:
+     * the widget's quick-add chips launch with only FLAG_ACTIVITY_NEW_TASK
+     * (BentoWidget), so their NEW_EVENT/NEW_TASK land here rather than in
+     * onCreate. (Static launcher shortcuts never do — the platform forces
+     * NEW_TASK|CLEAR_TASK on them, tearing down the task so they go through
+     * the onCreate path.) handleShortcutAction routes them through the
+     * clobber-safe quickAdd* paths, so a warm chip tap can't discard an
+     * in-progress draft. Also receives the action-less reminder-notification
+     * tap intent, for which handleShortcutAction is a no-op. setIntent keeps
+     * getIntent() fresh for later recreations.
      */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -133,8 +137,12 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             vm.data.first { it != null }
             when (action) {
-                ACTION_NEW_EVENT -> vm.newEvent()
-                ACTION_NEW_TASK -> vm.newTask()
+                // quickAdd* (not newEvent/newTask): they keep a dirty draft
+                // instead of clobbering it and always prefill today's date,
+                // ignoring a stale Calendar-tab selection. Notes have no
+                // clobber risk — newNote always creates a fresh note.
+                ACTION_NEW_EVENT -> vm.quickAddEvent()
+                ACTION_NEW_TASK -> vm.quickAddTask()
                 ACTION_NEW_NOTE -> vm.newNote()
             }
         }
@@ -155,7 +163,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private companion object {
-        /** Actions declared by the static launcher shortcuts (res/xml/shortcuts.xml). */
+        /**
+         * Actions declared by the static launcher shortcuts
+         * (res/xml/shortcuts.xml) and sent by the widget's quick-add chips
+         * (widget/BentoWidget.kt).
+         */
         const val ACTION_NEW_EVENT = "com.bento.calendar.NEW_EVENT"
         const val ACTION_NEW_TASK = "com.bento.calendar.NEW_TASK"
         const val ACTION_NEW_NOTE = "com.bento.calendar.NEW_NOTE"

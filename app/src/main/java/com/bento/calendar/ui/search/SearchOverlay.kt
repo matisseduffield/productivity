@@ -24,18 +24,28 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bento.calendar.data.AppData
@@ -48,6 +58,7 @@ import com.bento.calendar.ui.components.EmptyText
 import com.bento.calendar.ui.components.SectionLabel
 import com.bento.calendar.ui.components.TextLink
 import com.bento.calendar.ui.components.hairlineBottom
+import com.bento.calendar.ui.components.pressable
 import com.bento.calendar.ui.components.tap
 import com.bento.calendar.ui.theme.BentoIcons
 import com.bento.calendar.ui.theme.LocalBento
@@ -57,8 +68,8 @@ import kotlinx.coroutines.launch
 
 /** One row of the search dropdown (.srow). */
 private data class SearchRow(
-    val title: String,
-    val sub: String,
+    val title: AnnotatedString,
+    val sub: AnnotatedString,
     val meta: String,
     val icon: ImageVector,
     val onTap: () -> Unit,
@@ -85,12 +96,28 @@ fun SearchOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 .take(6)
                 .map { e ->
                     SearchRow(
-                        title = e.title,
-                        sub = Fmt.dayShort(e.date.toDate()) + " · " + Fmt.time(e.start, use24h) +
-                            if (e.recur.isNotEmpty() && e.recur != Recur.NONE) " · repeats ${e.recur}" else "",
+                        title = highlight(e.title, q, c.acc),
+                        // The location is part of the match filter, so show it
+                        // (highlighted) — otherwise a loc-only match renders no
+                        // visible occurrence of the query and reads as a false
+                        // positive. highlight() is a no-op when q isn't in loc.
+                        sub = buildAnnotatedString {
+                            append(
+                                Fmt.dayShort(e.date.toDate()) + " · " +
+                                    (if (e.allDay) "All day" else Fmt.time(e.start, use24h)) +
+                                    if (e.recur.isNotEmpty() && e.recur != Recur.NONE) " · repeats ${e.recur}" else "",
+                            )
+                            if (e.loc.isNotEmpty()) {
+                                append(" · ")
+                                append(highlight(e.loc, q, c.acc))
+                            }
+                        },
                         meta = "Event",
                         icon = BentoIcons.TabCalendar,
-                        onTap = { vm.openEvent(e) },
+                        onTap = {
+                            vm.recordSearch(vm.query)
+                            vm.openEvent(e)
+                        },
                     )
                 }
             val tk = data.tasks
@@ -98,15 +125,20 @@ fun SearchOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 .take(6)
                 .map { t ->
                     SearchRow(
-                        title = t.title,
-                        sub = when {
-                            t.done -> "Completed"
-                            t.due != null -> "Due " + Fmt.dueLabel(t.due, today)
-                            else -> "No due date"
-                        },
+                        title = highlight(t.title, q, c.acc),
+                        sub = AnnotatedString(
+                            when {
+                                t.done -> "Completed"
+                                t.due != null -> "Due " + Fmt.dueLabel(t.due, today)
+                                else -> "No due date"
+                            },
+                        ),
                         meta = "Task",
                         icon = BentoIcons.TabTasks,
-                        onTap = { vm.openTask(t) },
+                        onTap = {
+                            vm.recordSearch(vm.query)
+                            vm.openTask(t)
+                        },
                     )
                 }
             val nt = data.notes
@@ -114,11 +146,14 @@ fun SearchOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 .take(6)
                 .map { n ->
                     SearchRow(
-                        title = n.title.ifEmpty { "Untitled" },
-                        sub = if (n.locked) "Locked note" else notePreview(n),
+                        title = highlight(n.title.ifEmpty { "Untitled" }, q, c.acc),
+                        sub = if (n.locked) AnnotatedString("Locked note") else highlight(notePreview(n), q, c.acc),
                         meta = "Note",
                         icon = BentoIcons.Doc,
-                        onTap = { vm.openNote(n.id) },
+                        onTap = {
+                            vm.recordSearch(vm.query)
+                            vm.openNote(n.id)
+                        },
                     )
                 }
             if (ev.isNotEmpty()) add(SearchGroup("Events", ev))
@@ -164,9 +199,21 @@ fun SearchOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             val style = TextStyle(fontFamily = Sora, fontSize = 13.5.sp, color = c.tx)
+            // Cursor-aware wrapper around vm.query (the source of truth): the
+            // String-overload field keeps an internal selection that stays at 0
+            // when a recent search is recalled programmatically, putting the
+            // caret BEFORE the recalled text. Reconcile any external query
+            // change by moving the cursor to the end.
+            var fieldState by remember { mutableStateOf(TextFieldValue(vm.query, TextRange(vm.query.length))) }
+            val field =
+                if (fieldState.text == vm.query) fieldState
+                else TextFieldValue(vm.query, TextRange(vm.query.length))
             BasicTextField(
-                value = vm.query,
-                onValueChange = { vm.setQuery(it) },
+                value = field,
+                onValueChange = {
+                    fieldState = it
+                    vm.setQuery(it.text)
+                },
                 modifier = Modifier
                     .weight(1f)
                     .background(c.inp, RoundedCornerShape(14.dp))
@@ -212,10 +259,48 @@ fun SearchOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 group.rows.forEach { row -> ResultRow(row) }
             }
             if (groups.isEmpty()) {
-                EmptyText(
-                    if (q.isEmpty()) "Search your events, tasks and notes"
-                    else "No matches for “${vm.query}”",
-                )
+                val recents = data.prefs.recents
+                if (q.isEmpty() && recents.isNotEmpty()) {
+                    SectionLabel("Recent")
+                    recents.take(5).forEach { r ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .tap { vm.setQuery(r) }
+                                .padding(vertical = 9.dp, horizontal = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(9.dp),
+                        ) {
+                            Icon(BentoIcons.Clock, null, tint = c.faint, modifier = Modifier.size(14.dp))
+                            Text(
+                                r,
+                                fontSize = 13.sp,
+                                color = c.sub,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 4.dp),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        Text(
+                            "Clear",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.W700,
+                            color = c.acc,
+                            modifier = Modifier
+                                .pressable(onClick = { vm.clearRecentSearches() })
+                                .padding(horizontal = 2.dp, vertical = 4.dp),
+                        )
+                    }
+                } else {
+                    EmptyText(
+                        if (q.isEmpty()) "Search your events, tasks and notes"
+                        else "No matches for “${vm.query}”",
+                    )
+                }
             }
         }
     }
@@ -225,6 +310,24 @@ fun SearchOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
 private fun notePreview(n: NoteItem): String {
     val joined = n.body.split("\n").filter { it.isNotBlank() }.joinToString(" · ").take(90)
     return joined.ifEmpty { "No content" }
+}
+
+/**
+ * Accent + bold the first case-insensitive occurrence of [query] in [text];
+ * plain text when the query is empty or doesn't occur.
+ */
+private fun highlight(text: String, query: String, accent: Color): AnnotatedString {
+    val q = query.trim()
+    if (q.isEmpty()) return AnnotatedString(text)
+    val i = text.indexOf(q, ignoreCase = true)
+    if (i < 0) return AnnotatedString(text)
+    return buildAnnotatedString {
+        append(text.substring(0, i))
+        withStyle(SpanStyle(color = accent, fontWeight = FontWeight.W700)) {
+            append(text.substring(i, i + q.length))
+        }
+        append(text.substring(i + q.length))
+    }
 }
 
 @Composable

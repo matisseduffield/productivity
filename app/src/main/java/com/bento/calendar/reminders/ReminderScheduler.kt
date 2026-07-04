@@ -48,6 +48,8 @@ object ReminderScheduler {
     /**
      * Next reminder fire time strictly after [after], or null.
      * Several events sharing one minute are handled together at fire time.
+     * All-day events store start 00:00, so they remind relative to midnight
+     * ("At start" = 00:00 that day, "1 day before" = the prior midnight).
      */
     fun nextReminderTime(data: AppData, after: LocalDateTime): LocalDateTime? {
         var best: LocalDateTime? = null

@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import org.json.JSONException
 import org.json.JSONObject
+import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.temporal.ChronoUnit
 
@@ -201,6 +202,7 @@ class ReminderReceiver : BroadcastReceiver() {
                                 buildNotification(
                                     context, e.title, e.start, e.loc, remind,
                                     data.prefs.use24h, notifId,
+                                    allDay = e.allDay, date = date, now = now,
                                 ),
                             )
                         }
@@ -265,8 +267,21 @@ class ReminderReceiver : BroadcastReceiver() {
         remind: Int,
         use24h: Boolean,
         notifId: Int,
+        allDay: Boolean,
+        date: LocalDate,
+        now: LocalDateTime,
     ): Notification {
+        // All-day wording is derived from the occurrence date vs the actual
+        // delivery date — NOT from remind or the 00:00 clock time: alarms can
+        // be delivered late (Doze, restore), so a 23:50-armed "10 min before"
+        // alarm may only land after midnight, when the event is already today.
         val whenText = when {
+            allDay -> when (date) {
+                now.toLocalDate() -> "All day today"
+                now.toLocalDate().plusDays(1) -> "All day tomorrow"
+                // Very late/stale delivery: name the day instead.
+                else -> "All day · " + Fmt.dayShort(date)
+            }
             remind <= 0 -> "Starting now"
             else -> "Starts at " + Fmt.time(startHm, use24h)
         }

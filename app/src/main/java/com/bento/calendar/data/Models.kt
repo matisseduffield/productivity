@@ -30,6 +30,8 @@ data class EventItem(
     /** Minutes before start (0 = at start), null = no reminder. */
     val remind: Int? = null,
     val loc: String = "",
+    /** All-day events store start 00:00 / end 23:59; reminders fire off 00:00. */
+    val allDay: Boolean = false,
 )
 
 @Serializable
@@ -63,6 +65,8 @@ data class Prefs(
     val remindDef: Int? = 10,
     /** Default event length in minutes. */
     val durDef: Int = 60,
+    /** Last few search queries, most recent first. */
+    val recents: List<String> = emptyList(),
 )
 
 object Recur {

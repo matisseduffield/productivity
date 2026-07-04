@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -72,7 +74,12 @@ fun TodayScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
     val nowMin = now.hour * 60 + now.minute
     val use24h = data.prefs.use24h
 
-    val evT = occurrencesOn(data.events, today)
+    // All-day events are excluded from the up-next pick and the later-today
+    // rows (an all-day end of 23:59 would occupy "up next" all day); they get
+    // their own pill row above the bento grid instead.
+    val occT = occurrencesOn(data.events, today)
+    val allDayT = occT.filter { it.allDay }
+    val evT = occT.filter { !it.allDay }
     val nx = evT.firstOrNull { it.end.toMins() > nowMin }
     val openTasks = sortedOpenTasks(data.tasks, today)
 
@@ -158,6 +165,12 @@ fun TodayScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 )
             }
 
+            // All-day events: small accent pills between the banner slot and
+            // the bento grid; tap opens the editor.
+            if (allDayT.isNotEmpty()) {
+                AllDayPillRow(vm, allDayT)
+            }
+
             // Bento grid (.bgrid): 2 columns, 10dp gap, 14dp top margin.
             Column(
                 Modifier
@@ -165,7 +178,7 @@ fun TodayScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                     .padding(top = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                UpNextTile(vm, evT, nx, nowMin, use24h)
+                UpNextTile(vm, evT, nx, nowMin, use24h, hasAllDay = allDayT.isNotEmpty())
 
                 Row(
                     Modifier
@@ -223,6 +236,35 @@ private fun Eyebrow(text: String, color: Color, lockIcon: Boolean = false) {
     }
 }
 
+/** Wrap row of accent-tinted pills for today's all-day events (location-chip style at tile level). */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AllDayPillRow(vm: AppViewModel, allDay: List<EventItem>) {
+    val c = LocalBento.current
+    FlowRow(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        allDay.forEach { e ->
+            Text(
+                e.title,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.W700,
+                color = c.acc,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .tap { vm.openEvent(e) }
+                    .background(c.accTint(0.12f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+        }
+    }
+}
+
 /** Accent-tinted reminder banner (.notif) above the grid; slides in from 16dp below + fade, 300ms. */
 @Composable
 private fun ReminderBannerCard(
@@ -273,6 +315,7 @@ private fun UpNextTile(
     nx: EventItem?,
     nowMin: Int,
     use24h: Boolean,
+    hasAllDay: Boolean = false,
 ) {
     val c = LocalBento.current
     val eyebrow = when {
@@ -281,7 +324,11 @@ private fun UpNextTile(
         evT.isNotEmpty() -> "ALL DONE FOR TODAY"
         else -> "TODAY"
     }
-    val title = nx?.title ?: if (evT.isNotEmpty()) "Nothing else scheduled" else "No events today"
+    val title = nx?.title ?: when {
+        evT.isNotEmpty() -> "Nothing else scheduled"
+        hasAllDay -> "All-day events only"
+        else -> "No events today"
+    }
     val meta = if (nx != null) {
         "${Fmt.time(nx.start, use24h)} – ${Fmt.time(nx.end, use24h)} · ${Cats.of(nx.cat).label}" +
             if (nx.start.toMins() > nowMin) " · ${Fmt.countdown(nx.start.toMins() - nowMin)}" else ""

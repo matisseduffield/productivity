@@ -4,4 +4,5 @@
     <string name="shortcut_new_event">New event</string>
     <string name="shortcut_new_task">New task</string>
     <string name="shortcut_new_note">New note</string>
+    <string name="widget_description">Today\'s events and quick add</string>
 </resources>

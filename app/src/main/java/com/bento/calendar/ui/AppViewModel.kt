@@ -23,6 +23,7 @@ import com.bento.calendar.data.toIso
 import com.bento.calendar.data.toMins
 import com.bento.calendar.reminders.ReminderScheduler
 import com.bento.calendar.updates.UpdateManager
+import com.bento.calendar.widget.WidgetSync
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -54,6 +55,7 @@ data class EventDraft(
     val recur: String = Recur.NONE,
     val remind: Int? = 10,
     val loc: String = "",
+    val allDay: Boolean = false,
 )
 
 data class TaskDraft(
@@ -106,6 +108,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val query: String get() = queryState
     var settingsOpen by mutableStateOf(false)
         private set
+    var changelogOpen by mutableStateOf(false)
+        private set
     var fabOpen by mutableStateOf(false)
         private set
     var openNoteId by mutableStateOf<String?>(null)
@@ -143,6 +147,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val d = repo.data.first()
             ReminderScheduler.reschedule(getApplication(), d)
             lastScheduledEvents = d.events
+            // Seed the widget gate too: the widget already reflects the store
+            // at launch, so the first mutation only pushes if it changed
+            // something widget-relevant.
+            lastPushedWidget = widgetSnapshot(d)
         }
         // NOTE: the automatic update check is kicked off from MainActivity, not
         // here — the update state properties are declared below this init block
@@ -151,6 +159,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Events snapshot the alarm chain was last armed for (main-thread only). */
     private var lastScheduledEvents: List<EventItem>? = null
+
+    /**
+     * The projection of the store the widget actually renders. [mut] only
+     * pushes a widget update when this changes, so note-editor keystrokes and
+     * unrelated pref edits don't trigger a full Glance re-render per write.
+     */
+    private data class WidgetSnapshot(
+        val events: List<EventItem>,
+        val openTasks: Int,
+        val use24h: Boolean,
+        val theme: String,
+        val accent: String,
+    )
+
+    /** Snapshot the widget was last pushed for (main-thread only). */
+    private var lastPushedWidget: WidgetSnapshot? = null
+
+    private fun widgetSnapshot(d: AppData) = WidgetSnapshot(
+        events = d.events,
+        openTasks = d.tasks.count { !it.done },
+        use24h = d.prefs.use24h,
+        theme = d.prefs.theme,
+        accent = d.prefs.accent,
+    )
 
     fun refreshNow() {
         _now.value = LocalDateTime.now()
@@ -168,6 +200,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (d.events != lastScheduledEvents) {
                 ReminderScheduler.reschedule(getApplication(), d)
                 lastScheduledEvents = d.events
+            }
+            // Same idea for the widget: it only shows events, the open-task
+            // count and a few prefs, so gate the push on that projection.
+            val snap = widgetSnapshot(d)
+            if (snap != lastPushedWidget) {
+                WidgetSync.push(getApplication())
+                lastPushedWidget = snap
             }
         }
     }
@@ -204,8 +243,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         settingsOpen = true
     }
 
+    fun openChangelog() {
+        changelogOpen = true
+    }
+
+    fun closeChangelog() {
+        changelogOpen = false
+    }
+
     fun closeSheets() {
         settingsOpen = false
+        changelogOpen = false
         fabOpen = false
         evDraft = null
         tkDraft = null
@@ -229,13 +277,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             fabOpen -> fabOpen = false
             searchOpen -> closeSearch()
             openNoteId != null -> closeNote()
+            changelogOpen -> changelogOpen = false
             settingsOpen -> settingsOpen = false
         }
     }
 
     fun hasOverlay(): Boolean =
         pinCtx != null || evDraft != null || tkDraft != null || fabOpen ||
-            searchOpen || openNoteId != null || settingsOpen
+            searchOpen || openNoteId != null || settingsOpen || changelogOpen
 
     // ---- Calendar ----
 
@@ -342,6 +391,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             recur = base.recur,
             remind = base.remind,
             loc = base.loc,
+            allDay = base.allDay,
         )
         disarm(Arm.EVENT)
         searchOpen = false
@@ -349,8 +399,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun newEvent() {
+        newEventDraft(if (tab == Tab.Calendar) selDate else today())
+    }
+
+    /** Blank draft with the prefs defaults, dated [date]. */
+    private fun newEventDraft(date: LocalDate) {
         val pf = prefs()
-        val date = if (tab == Tab.Calendar) selDate else today()
         val endM = min(9 * 60 + pf.durDef, 1439)
         evDraft = EventDraft(
             id = null,
@@ -363,6 +417,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         )
         disarm(Arm.EVENT)
         fabOpen = false
+    }
+
+    /**
+     * Widget/shortcut quick-add. Unlike [newEvent] it (a) never clobbers a
+     * draft the user has already put content into — the widget chip lands in
+     * onNewIntent when the app is warm, possibly mid-edit — and (b) always
+     * dates the draft today, bypassing the Calendar-tab selDate heuristic,
+     * which can hold a stale selection from days ago.
+     */
+    fun quickAddEvent() {
+        val d = evDraft
+        if (d != null && (d.id != null || d.title.isNotBlank() || d.loc.isNotBlank())) return
+        newEventDraft(today())
     }
 
     /** Tap on an empty week/day grid slot. */
@@ -390,9 +457,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun saveEvent() {
         val d = evDraft ?: return
         // A start of 23:59 leaves no room for any duration — clamp to 23:58 so
-        // the persisted event can never be zero-length.
-        val startM = d.start.toMins().coerceAtMost(1438)
-        var endM = d.end.toMins()
+        // the persisted event can never be zero-length. All-day events span
+        // the whole day regardless of whatever the time fields held.
+        val startM = if (d.allDay) 0 else d.start.toMins().coerceAtMost(1438)
+        var endM = if (d.allDay) 1439 else d.end.toMins()
         if (endM <= startM) {
             endM = min(startM + 60, 1439)
         }
@@ -402,6 +470,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             date = d.date.toIso(),
             start = minsToHm(startM),
             end = minsToHm(endM),
+            allDay = d.allDay,
             cat = d.cat,
             recur = d.recur,
             remind = d.remind,
@@ -462,6 +531,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         tkDraft = TaskDraft(id = null)
         disarm(Arm.TASK)
         fabOpen = false
+    }
+
+    /** Widget/shortcut quick-add: like [quickAddEvent], never clobbers a task
+     *  draft the user has already put content into. */
+    fun quickAddTask() {
+        val d = tkDraft
+        if (d != null && (d.id != null || d.title.isNotBlank() || d.due != null || d.cat.isNotBlank())) return
+        newTask()
     }
 
     fun updateTaskDraft(transform: (TaskDraft) -> TaskDraft) {
@@ -711,6 +788,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun setQuery(q: String) {
         queryState = q
     }
+
+    /** Called when a search result is opened: remember the query (max 5). */
+    fun recordSearch(q: String) {
+        val query = q.trim()
+        if (query.isEmpty()) return
+        mutPrefs { p ->
+            p.copy(recents = (listOf(query) + p.recents.filter { !it.equals(query, ignoreCase = true) }).take(5))
+        }
+    }
+
+    fun clearRecentSearches() = mutPrefs { it.copy(recents = emptyList()) }
 
     // ---- Reminder banner ----
     fun dismissReminder(key: String) {

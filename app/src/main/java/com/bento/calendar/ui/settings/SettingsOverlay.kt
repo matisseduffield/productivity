@@ -311,7 +311,6 @@ fun SettingsOverlay(
                             vm.updateUpToDate -> "You're on the latest version"
                             else -> "Version ${BuildConfig.VERSION_NAME}"
                         },
-                        last = true,
                     ) {
                         if (update != null && phase == AppViewModel.UpdatePhase.Idle) {
                             TextLink("Update", onClick = { vm.downloadAndInstallUpdate() })
@@ -321,6 +320,14 @@ fun SettingsOverlay(
                                 onClick = { vm.checkForUpdates(manual = true) },
                             )
                         }
+                    }
+                    SettingsRow(
+                        icon = BentoIcons.Doc,
+                        title = "What's new",
+                        sub = "Version history",
+                        last = true,
+                    ) {
+                        TextLink("View", onClick = { vm.openChangelog() })
                     }
                 }
             }

@@ -516,9 +516,17 @@ private fun MonthCell(
 private fun AgendaRow(vm: AppViewModel, data: AppData, e: EventItem) {
     val c = LocalBento.current
     val meta = buildString {
-        append(Fmt.duration(e.start, e.end))
-        if (e.loc.isNotEmpty()) append(" · ").append(e.loc)
-        if (e.recur != Recur.NONE) append(" · repeats")
+        // "23 h 59" for an all-day event is noise — the time column already
+        // says "All day".
+        if (!e.allDay) append(Fmt.duration(e.start, e.end))
+        if (e.loc.isNotEmpty()) {
+            if (isNotEmpty()) append(" · ")
+            append(e.loc)
+        }
+        if (e.recur != Recur.NONE) {
+            if (isNotEmpty()) append(" · ")
+            append("repeats")
+        }
     }
     Row(
         Modifier
@@ -531,7 +539,7 @@ private fun AgendaRow(vm: AppViewModel, data: AppData, e: EventItem) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            Fmt.time(e.start, data.prefs.use24h),
+            if (e.allDay) "All day" else Fmt.time(e.start, data.prefs.use24h),
             fontSize = 11.5.sp,
             fontWeight = FontWeight.W600,
             color = c.sub,
@@ -546,7 +554,9 @@ private fun AgendaRow(vm: AppViewModel, data: AppData, e: EventItem) {
         )
         Column(Modifier.weight(1f)) {
             Text(e.title, fontSize = 14.sp, fontWeight = FontWeight.W600, color = c.tx)
-            Text(meta, fontSize = 11.5.sp, color = c.sub, modifier = Modifier.padding(top = 2.dp))
+            if (meta.isNotEmpty()) {
+                Text(meta, fontSize = 11.5.sp, color = c.sub, modifier = Modifier.padding(top = 2.dp))
+            }
         }
         if (e.remind != null) {
             Icon(BentoIcons.Bell, null, tint = c.faint, modifier = Modifier.size(14.dp))
@@ -559,10 +569,11 @@ private fun AgendaRow(vm: AppViewModel, data: AppData, e: EventItem) {
 /** One folded "+N" overflow pill: [count] hidden events; [bottomMin] is the cluster's visual end in grid minutes. */
 private data class WeekOverflow(val count: Int, val bottomMin: Int)
 
-/** Pre-computed layout for one Week-view day column: rendered blocks plus overflow pills. */
+/** Pre-computed layout for one Week-view day column: rendered blocks, overflow pills and all-day events. */
 private data class WeekDayLayout(
     val blocks: List<Positioned<Triple<EventItem, Int, Int>>>,
     val overflows: List<WeekOverflow>,
+    val allDay: List<EventItem>,
 )
 
 @Composable
@@ -584,7 +595,11 @@ private fun WeekView(vm: AppViewModel, data: AppData, now: LocalDateTime, weekSt
     val perDay = remember(data.events, weekStart) {
         (0..6).map { i ->
             val date = ws.plusDays(i.toLong())
-            val visible = occurrencesOn(data.events, date).mapNotNull { e ->
+            // All-day events would render as full-day columns in the timed
+            // grid — split them out here (same memo) for the strip above it.
+            val occ = occurrencesOn(data.events, date)
+            val allDay = occ.filter { it.allDay }
+            val visible = occ.filter { !it.allDay }.mapNotNull { e ->
                 val s = maxOf(e.start.toMins(), 420)
                 val en = minOf(e.end.toMins(), 1320)
                 if (en <= 420 || s >= 1320) null else Triple(e, s, en)
@@ -611,7 +626,7 @@ private fun WeekView(vm: AppViewModel, data: AppData, now: LocalDateTime, weekSt
                 if (p.col >= 2) folded++ else blocks.add(p)
             }
             flush()
-            WeekDayLayout(blocks, overflows)
+            WeekDayLayout(blocks, overflows, allDay)
         }
     }
 
@@ -634,6 +649,36 @@ private fun WeekView(vm: AppViewModel, data: AppData, now: LocalDateTime, weekSt
                     color = c.faint,
                 )
                 DayNumberPill(date.dayOfMonth, isToday = date == today, isSelected = date == vm.selDate)
+            }
+        }
+    }
+
+    // All-day strip: a thin category-colored bar per all-day event (max 2)
+    // above each day column — the columns are too narrow for text; tapping a
+    // day's bars opens that date's Day view where the full pills live.
+    if (perDay.any { it.allDay.isNotEmpty() }) {
+        Row(Modifier.fillMaxWidth().padding(top = 6.dp, start = 34.dp)) {
+            for (i in 0..6) {
+                val date = ws.plusDays(i.toLong())
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .padding(horizontal = 2.dp)
+                        .tap {
+                            vm.selectDate(date)
+                            vm.setCalView(CalView.Day)
+                        },
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    perDay[i].allDay.take(2).forEach { e ->
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(4.dp)
+                                .background(Cats.of(e.cat).color, RoundedCornerShape(2.dp)),
+                        )
+                    }
+                }
             }
         }
     }
@@ -754,6 +799,84 @@ private fun DayView(vm: AppViewModel, data: AppData, now: LocalDateTime, selDate
     val nowMin = now.hour * 60 + now.minute
     val use24h = data.prefs.use24h
 
+    // Occurrences + overlap layout memoized so the 15s clock tick does not
+    // recompute them (nothing here depends on `now`). All-day events are split
+    // out in the SAME memo: they never enter the timed grid or the overlap
+    // layout (they'd render as full-day columns) and feed the pill strip
+    // instead. Events shorter than the 30dp min block height get a visually-
+    // effective end of start+36 min (30dp block + 3dp gap at 56dp/hour) so
+    // blocks that will RENDER overlapping are laid out side by side.
+    val (allDayEvents, positioned) = remember(data.events, selDate) {
+        val occ = occurrencesOn(data.events, selDate)
+        val visible = occ.filter { !it.allDay }.mapNotNull { e ->
+            // Skip events entirely outside the 06:00-23:00 grid — clamping
+            // alone would draw phantom min-height blocks at the edges.
+            if (e.end.toMins() <= 360 || e.start.toMins() >= 1380) null
+            else Triple(e, maxOf(e.start.toMins(), 360), minOf(e.end.toMins(), 1380))
+        }
+        Pair(
+            occ.filter { it.allDay },
+            layoutOverlaps(visible, startOf = { it.second }, endOf = { maxOf(it.third, it.second + 36) }),
+        )
+    }
+
+    // All-day pill strip above the timed grid: full-width pills, up to 3
+    // collapsed. Tapping "+N more" expands the strip in place so every all-day
+    // event stays reachable from Day view (the Week strip routes here on the
+    // promise it "shows all"); tapping again collapses. The strip lives in the
+    // scrollable column, so the expanded height is fine. State resets per day.
+    if (allDayEvents.isNotEmpty()) {
+        var allDayExpanded by remember(selDate) { mutableStateOf(false) }
+        Column(
+            Modifier.fillMaxWidth().padding(top = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            val shown = if (allDayExpanded) allDayEvents else allDayEvents.take(3)
+            shown.forEach { e ->
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(22.dp)
+                        .clip(RoundedCornerShape(7.dp))
+                        .background(Cats.of(e.cat).color)
+                        .tap { vm.openEvent(e) }
+                        .padding(horizontal = 8.dp),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    Text(
+                        e.title,
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.W700,
+                        color = OnCategory,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            if (allDayEvents.size > 3) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(22.dp)
+                        .clip(RoundedCornerShape(7.dp))
+                        .background(c.tile, RoundedCornerShape(7.dp))
+                        .border(1.dp, c.bd, RoundedCornerShape(7.dp))
+                        .tap { allDayExpanded = !allDayExpanded }
+                        .padding(horizontal = 8.dp),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    Text(
+                        if (allDayExpanded) "Show less" else "+${allDayEvents.size - 3} more",
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.W700,
+                        color = c.sub,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+    }
+
     // Grid: 44dp gutter + 06:00-23:00 column (17h x 56dp = 952dp).
     Row(Modifier.fillMaxWidth().padding(top = 8.dp)) {
         Column(Modifier.width(44.dp)) {
@@ -786,20 +909,6 @@ private fun DayView(vm: AppViewModel, data: AppData, now: LocalDateTime, selDate
                         }
                     },
             )
-            // Occurrences + overlap layout memoized so the 15s clock tick does
-            // not recompute them (nothing here depends on `now`). Events shorter
-            // than the 30dp min block height get a visually-effective end of
-            // start+36 min (30dp block + 3dp gap at 56dp/hour) so blocks that
-            // will RENDER overlapping are laid out side by side.
-            val positioned = remember(data.events, selDate) {
-                val visible = occurrencesOn(data.events, selDate).mapNotNull { e ->
-                    // Skip events entirely outside the 06:00-23:00 grid — clamping
-                    // alone would draw phantom min-height blocks at the edges.
-                    if (e.end.toMins() <= 360 || e.start.toMins() >= 1380) null
-                    else Triple(e, maxOf(e.start.toMins(), 360), minOf(e.end.toMins(), 1380))
-                }
-                layoutOverlaps(visible, startOf = { it.second }, endOf = { maxOf(it.third, it.second + 36) })
-            }
             positioned.forEach { p ->
                 val (e, s, en) = p.item
                 val slice = blockW / p.cols

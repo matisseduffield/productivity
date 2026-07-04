@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.CircleShape
@@ -17,6 +18,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
@@ -36,6 +38,7 @@ import com.bento.calendar.ui.Fmt
 import com.bento.calendar.ui.components.BentoDateField
 import com.bento.calendar.ui.components.BentoSelectField
 import com.bento.calendar.ui.components.BentoSheet
+import com.bento.calendar.ui.components.BentoSwitch
 import com.bento.calendar.ui.components.BentoTextField
 import com.bento.calendar.ui.components.BentoTimeField
 import com.bento.calendar.ui.components.CategoryPills
@@ -100,85 +103,118 @@ fun EventEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 onPick = { v -> vm.updateEventDraft { it.copy(date = v) } },
             )
         }
+        // All-day toggle; when on, the time-of-day controls below disappear
+        // (saveEvent forces 00:00-23:59 regardless of the hidden fields).
         Row(
             Modifier
                 .fillMaxWidth()
                 .padding(top = 15.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(Modifier.weight(1f)) {
-                FieldLabel("Starts")
-                BentoTimeField(
-                    valueHm = d.start,
-                    display = Fmt.time(d.start, use24h),
-                    use24h = use24h,
-                    onPick = { newStart ->
-                        // Keep the current duration when the start moves.
-                        // Zero-or-negative durations fall back to 60 min,
-                        // matching saveEvent's coercion.
-                        val raw = d.end.toMins() - d.start.toMins()
-                        val dur = if (raw <= 0) 60 else raw
-                        // Cap the start at 23:58 so the end always has at
-                        // least one minute of headroom before 23:59.
-                        val startM = newStart.toMins().coerceAtMost(1438)
-                        val end = minsToHm((startM + dur).coerceIn(startM + 1, 1439))
-                        vm.updateEventDraft { it.copy(start = minsToHm(startM), end = end) }
-                    },
-                )
-            }
-            Column(Modifier.weight(1f)) {
-                FieldLabel("Ends")
-                BentoTimeField(
-                    valueHm = d.end,
-                    display = Fmt.time(d.end, use24h),
-                    use24h = use24h,
-                    onPick = { v -> vm.updateEventDraft { it.copy(end = v) } },
-                )
-            }
+            Text("All day", fontSize = 13.5.sp, fontWeight = FontWeight.W600, color = c.tx)
+            Spacer(Modifier.weight(1f))
+            BentoSwitch(on = d.allDay, onToggle = {
+                val durDef = data.prefs.durDef
+                vm.updateEventDraft {
+                    val next = it.copy(allDay = !it.allDay)
+                    // Toggling all-day OFF on a draft holding the all-day
+                    // sentinels (00:00-23:59, e.g. opened from a persisted
+                    // all-day event) would expose a nonsensical near-24h timed
+                    // event — restore the newEvent defaults instead. A timed
+                    // draft toggled on->off within one edit keeps its hidden
+                    // field values, so it never trips the sentinel check.
+                    if (it.allDay && it.start == "00:00" && it.end == "23:59") {
+                        next.copy(
+                            start = "09:00",
+                            end = minsToHm((9 * 60 + durDef).coerceAtMost(1439)),
+                        )
+                    } else {
+                        next
+                    }
+                }
+            })
         }
-        val durMins = d.end.toMins() - d.start.toMins()
-        if (durMins > 0) {
-            Text(
-                Fmt.duration(d.start, d.end),
-                fontSize = 11.sp,
-                color = c.sub,
-                modifier = Modifier.padding(top = 6.dp, start = 2.dp),
-            )
-        } else {
-            // Mirrors saveEvent's coercion: end = min(start + 60, 23:59).
-            val fixedEnd = (d.start.toMins() + 60).coerceAtMost(1439)
-            Text(
-                if (fixedEnd == d.start.toMins()) {
-                    // Start is 23:59 — no headroom left; avoid "will save as 0 min".
-                    "Ends before it starts — end will be adjusted on save"
-                } else {
-                    "Ends before it starts — will save as " +
-                        Fmt.duration(d.start, minsToHm(fixedEnd))
-                },
-                fontSize = 11.sp,
-                color = c.dng,
-                modifier = Modifier.padding(top = 6.dp, start = 2.dp),
-            )
-        }
-        Column(Modifier.padding(top = 15.dp)) {
-            FieldLabel("Duration")
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(7.dp),
-                verticalArrangement = Arrangement.spacedBy(7.dp),
+        if (!d.allDay) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 15.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                DurationPresets.forEach { (label, mins) ->
-                    DurationPill(
-                        label = label,
-                        active = durMins > 0 && durMins == mins,
-                        // A preset that would push the end past 23:59 cannot
-                        // be honored — disable it instead of silently capping.
-                        enabled = d.start.toMins() + mins <= 1439,
-                        onClick = {
-                            vm.updateEventDraft {
-                                it.copy(end = minsToHm((it.start.toMins() + mins).coerceAtMost(1439)))
-                            }
+                Column(Modifier.weight(1f)) {
+                    FieldLabel("Starts")
+                    BentoTimeField(
+                        valueHm = d.start,
+                        display = Fmt.time(d.start, use24h),
+                        use24h = use24h,
+                        onPick = { newStart ->
+                            // Keep the current duration when the start moves.
+                            // Zero-or-negative durations fall back to 60 min,
+                            // matching saveEvent's coercion.
+                            val raw = d.end.toMins() - d.start.toMins()
+                            val dur = if (raw <= 0) 60 else raw
+                            // Cap the start at 23:58 so the end always has at
+                            // least one minute of headroom before 23:59.
+                            val startM = newStart.toMins().coerceAtMost(1438)
+                            val end = minsToHm((startM + dur).coerceIn(startM + 1, 1439))
+                            vm.updateEventDraft { it.copy(start = minsToHm(startM), end = end) }
                         },
                     )
+                }
+                Column(Modifier.weight(1f)) {
+                    FieldLabel("Ends")
+                    BentoTimeField(
+                        valueHm = d.end,
+                        display = Fmt.time(d.end, use24h),
+                        use24h = use24h,
+                        onPick = { v -> vm.updateEventDraft { it.copy(end = v) } },
+                    )
+                }
+            }
+            val durMins = d.end.toMins() - d.start.toMins()
+            if (durMins > 0) {
+                Text(
+                    Fmt.duration(d.start, d.end),
+                    fontSize = 11.sp,
+                    color = c.sub,
+                    modifier = Modifier.padding(top = 6.dp, start = 2.dp),
+                )
+            } else {
+                // Mirrors saveEvent's coercion: end = min(start + 60, 23:59).
+                val fixedEnd = (d.start.toMins() + 60).coerceAtMost(1439)
+                Text(
+                    if (fixedEnd == d.start.toMins()) {
+                        // Start is 23:59 — no headroom left; avoid "will save as 0 min".
+                        "Ends before it starts — end will be adjusted on save"
+                    } else {
+                        "Ends before it starts — will save as " +
+                            Fmt.duration(d.start, minsToHm(fixedEnd))
+                    },
+                    fontSize = 11.sp,
+                    color = c.dng,
+                    modifier = Modifier.padding(top = 6.dp, start = 2.dp),
+                )
+            }
+            Column(Modifier.padding(top = 15.dp)) {
+                FieldLabel("Duration")
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    verticalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    DurationPresets.forEach { (label, mins) ->
+                        DurationPill(
+                            label = label,
+                            active = durMins > 0 && durMins == mins,
+                            // A preset that would push the end past 23:59 cannot
+                            // be honored — disable it instead of silently capping.
+                            enabled = d.start.toMins() + mins <= 1439,
+                            onClick = {
+                                vm.updateEventDraft {
+                                    it.copy(end = minsToHm((it.start.toMins() + mins).coerceAtMost(1439)))
+                                }
+                            },
+                        )
+                    }
                 }
             }
         }

@@ -40,9 +40,14 @@ fun taskSections(tasks: List<TaskItem>, today: LocalDate): List<TaskSection> {
 data class ReminderBanner(val key: String, val event: EventItem, val minsUntil: Int)
 
 /**
- * The Today-tab reminder banner: first of today's events whose reminder window
- * is open (start - remind <= now <= start, with 1 min of grace) and that hasn't
- * been dismissed today.
+ * The Today-tab reminder banner: first of today's timed events whose reminder
+ * window is open (start - remind <= now <= start, with 1 min of grace) and
+ * that hasn't been dismissed today. All-day events are skipped: their
+ * reminders anchor to a stored start of 00:00, so the window would only be
+ * open in the first minute of the day — a nonsense "starting now" banner at
+ * midnight that shadows any open timed banner (all-day occurrences sort
+ * first) and is unreachable during waking hours. Their system notification
+ * still fires via the scheduler.
  */
 fun activeReminder(
     events: List<EventItem>,
@@ -51,6 +56,7 @@ fun activeReminder(
     dismissed: Set<String>,
 ): ReminderBanner? {
     for (e in occurrencesOn(events, today)) {
+        if (e.allDay) continue
         val remind = e.remind ?: continue
         val diff = e.start.toMins() - nowMin
         val key = e.id + today.toIso()

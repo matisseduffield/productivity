@@ -38,3 +38,4 @@ banner). Publishing an update = bump versionCode/versionName, push a `v*` tag.
 
 - `applicationId` com.bento.calendar · minSdk 27 · target/compile SDK 35
 - versionCode/versionName in `app/build.gradle.kts` — bump both for updates
+- Every release: add an entry to `app/src/main/java/com/bento/calendar/ui/settings/Changelog.kt` (shown in Settings → What's new)
