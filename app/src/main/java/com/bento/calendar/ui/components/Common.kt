@@ -273,6 +273,8 @@ fun BentoTextField(
     placeholder: String = "",
     singleLine: Boolean = true,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    keyboardActions: androidx.compose.foundation.text.KeyboardActions =
+        androidx.compose.foundation.text.KeyboardActions.Default,
     textStyle: TextStyle? = null,
 ) {
     val c = LocalBento.current
@@ -292,6 +294,7 @@ fun BentoTextField(
         textStyle = style,
         singleLine = singleLine,
         keyboardOptions = keyboardOptions,
+        keyboardActions = keyboardActions,
         cursorBrush = SolidColor(c.acc),
         decorationBox = { inner ->
             Box {

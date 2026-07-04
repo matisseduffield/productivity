@@ -5,10 +5,18 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bento.calendar.data.AppData
@@ -36,6 +44,11 @@ import java.time.LocalDateTime
 fun TaskEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
     val c = LocalBento.current
     val d = vm.tkDraft ?: return
+    val titleFocus = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
+    LaunchedEffect(Unit) {
+        if (d.id == null) titleFocus.requestFocus()
+    }
     BentoSheet(onDismiss = vm::closeSheets) {
         Text(
             if (d.id != null) "Edit task" else "New task",
@@ -48,7 +61,20 @@ fun TaskEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
             BentoTextField(
                 value = d.title,
                 onValueChange = { v -> vm.updateTaskDraft { it.copy(title = v) } },
+                modifier = Modifier.focusRequester(titleFocus),
                 placeholder = "What needs doing?",
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                // Quick-add flow: type the task, hit Done, saved. Read the
+                // live draft (not the composed snapshot) so a same-frame edit
+                // can't slip a stale title past the guard; on a blank title,
+                // dismiss the keyboard instead of doing nothing.
+                keyboardActions = KeyboardActions(onDone = {
+                    if (vm.tkDraft?.title?.isNotBlank() == true) {
+                        vm.saveTask()
+                    } else {
+                        focusManager.clearFocus()
+                    }
+                }),
             )
         }
         Column(Modifier.padding(top = 15.dp)) {

@@ -384,16 +384,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun saveEvent() {
         val d = evDraft ?: return
-        var end = d.end
-        if (end.toMins() <= d.start.toMins()) {
-            end = minsToHm(min(d.start.toMins() + 60, 1439))
+        // A start of 23:59 leaves no room for any duration — clamp to 23:58 so
+        // the persisted event can never be zero-length.
+        val startM = d.start.toMins().coerceAtMost(1438)
+        var endM = d.end.toMins()
+        if (endM <= startM) {
+            endM = min(startM + 60, 1439)
         }
         val rec = EventItem(
             id = d.id ?: newId(),
             title = d.title.trim().ifEmpty { "Untitled" },
             date = d.date.toIso(),
-            start = d.start,
-            end = end,
+            start = minsToHm(startM),
+            end = minsToHm(endM),
             cat = d.cat,
             recur = d.recur,
             remind = d.remind,

@@ -58,6 +58,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
@@ -543,6 +544,15 @@ private fun AgendaRow(vm: AppViewModel, data: AppData, e: EventItem) {
 
 // ---- Week view ----
 
+/** One folded "+N" overflow pill: [count] hidden events; [bottomMin] is the cluster's visual end in grid minutes. */
+private data class WeekOverflow(val count: Int, val bottomMin: Int)
+
+/** Pre-computed layout for one Week-view day column: rendered blocks plus overflow pills. */
+private data class WeekDayLayout(
+    val blocks: List<Positioned<Triple<EventItem, Int, Int>>>,
+    val overflows: List<WeekOverflow>,
+)
+
 @Composable
 private fun WeekView(vm: AppViewModel, data: AppData, now: LocalDateTime, weekStart: LocalDate) {
     val c = LocalBento.current
@@ -552,6 +562,46 @@ private fun WeekView(vm: AppViewModel, data: AppData, now: LocalDateTime, weekSt
     // The week identity comes in as a parameter (already normalized to the
     // week start); the SELECTED day is read live so pill taps don't animate.
     val ws = weekStart
+
+    // Per-day occurrences + overlap layout, computed once per data/week change
+    // — NOT on every 15s clock tick (nothing here depends on `now`). Events
+    // shorter than the 14dp min block height get a visually-effective end of
+    // start+22 min (14dp block + 2dp gap at 44dp/hour) so blocks that will
+    // RENDER overlapping are laid out side by side; clusters wider than two
+    // columns fold the rest into a per-cluster "+N" pill (Day view shows all).
+    val perDay = remember(data.events, weekStart) {
+        (0..6).map { i ->
+            val date = ws.plusDays(i.toLong())
+            val visible = occurrencesOn(data.events, date).mapNotNull { e ->
+                val s = maxOf(e.start.toMins(), 420)
+                val en = minOf(e.end.toMins(), 1320)
+                if (en <= 420 || s >= 1320) null else Triple(e, s, en)
+            }
+            val effEnd = { t: Triple<EventItem, Int, Int> -> maxOf(t.third, t.second + 22) }
+            val positioned = layoutOverlaps(visible, startOf = { it.second }, endOf = effEnd)
+            // Fold columns >= 2 into per-cluster "+N" pills. The positioned
+            // list is in cluster order, so boundaries are re-detected with the
+            // same rule layoutOverlaps uses (start >= running max effective end).
+            val blocks = ArrayList<Positioned<Triple<EventItem, Int, Int>>>()
+            val overflows = ArrayList<WeekOverflow>()
+            var clusterMaxEnd = Int.MIN_VALUE
+            var folded = 0
+            fun flush() {
+                if (folded > 0) overflows.add(WeekOverflow(folded, clusterMaxEnd))
+                folded = 0
+            }
+            for (p in positioned) {
+                if (clusterMaxEnd != Int.MIN_VALUE && p.item.second >= clusterMaxEnd) {
+                    flush()
+                    clusterMaxEnd = Int.MIN_VALUE
+                }
+                clusterMaxEnd = maxOf(clusterMaxEnd, effEnd(p.item))
+                if (p.col >= 2) folded++ else blocks.add(p)
+            }
+            flush()
+            WeekDayLayout(blocks, overflows)
+        }
+    }
 
     // Day header row (offset by the 34dp hour gutter).
     Row(Modifier.fillMaxWidth().padding(top = 12.dp, start = 34.dp)) {
@@ -615,19 +665,26 @@ private fun WeekView(vm: AppViewModel, data: AppData, now: LocalDateTime, weekSt
             )
             for (i in 0..6) {
                 val date = ws.plusDays(i.toLong())
-                occurrencesOn(data.events, date).forEach { e ->
-                    val s = maxOf(e.start.toMins(), 420)
-                    val en = minOf(e.end.toMins(), 1320)
-                    if (en <= 420 || s >= 1320) return@forEach
+                val dayLayout = perDay[i]
+                val dayX = colW * i
+                val inner = colW - 4.dp
+                dayLayout.blocks.forEach { p ->
+                    val (e, s, en) = p.item
+                    val cols = minOf(p.cols, 2)
+                    val slice = inner / cols
+                    // Height first, then clamp y so min-height blocks near the
+                    // grid end stay inside the 660dp timeline.
+                    val h = maxOf((en - s) / 60f * 44f - 2f, 14f)
+                    val y = minOf((s - 420) / 60f * 44f, 660f - h)
                     Box(
                         Modifier
-                            .offset(x = colW * i + 2.dp, y = ((s - 420) / 60f * 44f).dp)
-                            .width(colW - 4.dp)
-                            .height(maxOf((en - s) / 60f * 44f - 2f, 14f).dp)
+                            .offset(x = dayX + 2.dp + slice * p.col, y = y.dp)
+                            .width((slice - (if (p.col < cols - 1) 2.dp else 0.dp)).coerceAtLeast(6.dp))
+                            .height(h.dp)
                             .clip(RoundedCornerShape(7.dp))
                             .background(Cats.of(e.cat).color)
                             .tap { vm.openEvent(e) }
-                            .padding(horizontal = 5.dp, vertical = 3.dp),
+                            .padding(horizontal = if (slice < 20.dp) 2.dp else 5.dp, vertical = 3.dp),
                     ) {
                         Text(
                             e.title,
@@ -635,6 +692,36 @@ private fun WeekView(vm: AppViewModel, data: AppData, now: LocalDateTime, weekSt
                             fontWeight = FontWeight.W700,
                             color = OnCategory,
                             lineHeight = 1.25.em,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                dayLayout.overflows.forEach { o ->
+                    // "+N" chip at the bottom-right of the cluster's time range;
+                    // tapping jumps to Day view, where every event is visible.
+                    val bottom = minOf((o.bottomMin - 420) / 60f * 44f, 660f)
+                    Box(
+                        Modifier
+                            .offset(x = dayX + 2.dp, y = (bottom - 16f).coerceAtLeast(0f).dp)
+                            .width(inner)
+                            .height(16.dp),
+                        contentAlignment = Alignment.BottomEnd,
+                    ) {
+                        Text(
+                            "+${o.count}",
+                            fontSize = 8.5.sp,
+                            fontWeight = FontWeight.W700,
+                            color = c.sub,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(c.inp)
+                                .border(1.dp, c.bd, RoundedCornerShape(6.dp))
+                                .tap {
+                                    vm.selectDate(date)
+                                    vm.setCalView(CalView.Day)
+                                }
+                                .padding(horizontal = 4.dp, vertical = 1.dp),
                         )
                     }
                 }
@@ -687,17 +774,32 @@ private fun DayView(vm: AppViewModel, data: AppData, now: LocalDateTime, selDate
                         }
                     },
             )
-            occurrencesOn(data.events, selDate).forEach { e ->
-                // Skip events entirely outside the 06:00-23:00 grid — clamping
-                // alone would draw phantom min-height blocks at the edges.
-                if (e.end.toMins() <= 360 || e.start.toMins() >= 1380) return@forEach
-                val s = maxOf(e.start.toMins(), 360)
-                val en = minOf(e.end.toMins(), 1380)
+            // Occurrences + overlap layout memoized so the 15s clock tick does
+            // not recompute them (nothing here depends on `now`). Events shorter
+            // than the 30dp min block height get a visually-effective end of
+            // start+36 min (30dp block + 3dp gap at 56dp/hour) so blocks that
+            // will RENDER overlapping are laid out side by side.
+            val positioned = remember(data.events, selDate) {
+                val visible = occurrencesOn(data.events, selDate).mapNotNull { e ->
+                    // Skip events entirely outside the 06:00-23:00 grid — clamping
+                    // alone would draw phantom min-height blocks at the edges.
+                    if (e.end.toMins() <= 360 || e.start.toMins() >= 1380) null
+                    else Triple(e, maxOf(e.start.toMins(), 360), minOf(e.end.toMins(), 1380))
+                }
+                layoutOverlaps(visible, startOf = { it.second }, endOf = { maxOf(it.third, it.second + 36) })
+            }
+            positioned.forEach { p ->
+                val (e, s, en) = p.item
+                val slice = blockW / p.cols
+                // Height first, then clamp y so min-height blocks near the grid
+                // end stay inside the 952dp timeline.
+                val h = maxOf((en - s) / 60f * 56f - 3f, 30f)
+                val y = minOf((s - 360) / 60f * 56f, 952f - h)
                 Column(
                     Modifier
-                        .offset(x = 4.dp, y = ((s - 360) / 60f * 56f).dp)
-                        .width(blockW)
-                        .height(maxOf((en - s) / 60f * 56f - 3f, 30f).dp)
+                        .offset(x = 4.dp + slice * p.col, y = y.dp)
+                        .width(slice - (if (p.col < p.cols - 1) 3.dp else 0.dp))
+                        .height(h.dp)
                         .clip(RoundedCornerShape(11.dp))
                         .background(Cats.of(e.cat).color)
                         .tap { vm.openEvent(e) }

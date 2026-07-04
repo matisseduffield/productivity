@@ -1,18 +1,35 @@
 package com.bento.calendar.ui.sheets
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bento.calendar.data.AppData
 import com.bento.calendar.data.Recur
+import com.bento.calendar.data.minsToHm
+import com.bento.calendar.data.toMins
 import com.bento.calendar.ui.AppViewModel
 import com.bento.calendar.ui.Arm
 import com.bento.calendar.ui.Fmt
@@ -25,8 +42,18 @@ import com.bento.calendar.ui.components.CategoryPills
 import com.bento.calendar.ui.components.DangerTextButton
 import com.bento.calendar.ui.components.FieldLabel
 import com.bento.calendar.ui.components.PrimaryButton
+import com.bento.calendar.ui.components.pressable
 import com.bento.calendar.ui.theme.LocalBento
 import java.time.LocalDateTime
+
+/** Duration quick-pick presets: label -> minutes. */
+private val DurationPresets = listOf(
+    "30 min" to 30,
+    "45 min" to 45,
+    "1 h" to 60,
+    "1.5 h" to 90,
+    "2 h" to 120,
+)
 
 /**
  * Event editor bottom sheet (prototype `evOpen` sheet, markup lines 257-267,
@@ -34,11 +61,17 @@ import java.time.LocalDateTime
  * / Location / Save / two-tap Delete. Repeating-event note when editing a
  * recurring event.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun EventEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
     val c = LocalBento.current
     val d = vm.evDraft ?: return
     val use24h = data.prefs.use24h
+    val titleFocus = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
+    LaunchedEffect(Unit) {
+        if (d.id == null) titleFocus.requestFocus()
+    }
     BentoSheet(onDismiss = vm::closeSheets) {
         Text(
             if (d.id != null) "Edit event" else "New event",
@@ -51,7 +84,12 @@ fun EventEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
             BentoTextField(
                 value = d.title,
                 onValueChange = { v -> vm.updateEventDraft { it.copy(title = v) } },
+                modifier = Modifier.focusRequester(titleFocus),
                 placeholder = "Event title",
+                // Date and time below are tap-to-open pickers, not focusable
+                // text fields, so there is nothing for "Next" to advance to.
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
             )
         }
         Column(Modifier.padding(top = 15.dp)) {
@@ -74,7 +112,18 @@ fun EventEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                     valueHm = d.start,
                     display = Fmt.time(d.start, use24h),
                     use24h = use24h,
-                    onPick = { v -> vm.updateEventDraft { it.copy(start = v) } },
+                    onPick = { newStart ->
+                        // Keep the current duration when the start moves.
+                        // Zero-or-negative durations fall back to 60 min,
+                        // matching saveEvent's coercion.
+                        val raw = d.end.toMins() - d.start.toMins()
+                        val dur = if (raw <= 0) 60 else raw
+                        // Cap the start at 23:58 so the end always has at
+                        // least one minute of headroom before 23:59.
+                        val startM = newStart.toMins().coerceAtMost(1438)
+                        val end = minsToHm((startM + dur).coerceIn(startM + 1, 1439))
+                        vm.updateEventDraft { it.copy(start = minsToHm(startM), end = end) }
+                    },
                 )
             }
             Column(Modifier.weight(1f)) {
@@ -85,6 +134,52 @@ fun EventEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                     use24h = use24h,
                     onPick = { v -> vm.updateEventDraft { it.copy(end = v) } },
                 )
+            }
+        }
+        val durMins = d.end.toMins() - d.start.toMins()
+        if (durMins > 0) {
+            Text(
+                Fmt.duration(d.start, d.end),
+                fontSize = 11.sp,
+                color = c.sub,
+                modifier = Modifier.padding(top = 6.dp, start = 2.dp),
+            )
+        } else {
+            // Mirrors saveEvent's coercion: end = min(start + 60, 23:59).
+            val fixedEnd = (d.start.toMins() + 60).coerceAtMost(1439)
+            Text(
+                if (fixedEnd == d.start.toMins()) {
+                    // Start is 23:59 — no headroom left; avoid "will save as 0 min".
+                    "Ends before it starts — end will be adjusted on save"
+                } else {
+                    "Ends before it starts — will save as " +
+                        Fmt.duration(d.start, minsToHm(fixedEnd))
+                },
+                fontSize = 11.sp,
+                color = c.dng,
+                modifier = Modifier.padding(top = 6.dp, start = 2.dp),
+            )
+        }
+        Column(Modifier.padding(top = 15.dp)) {
+            FieldLabel("Duration")
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                verticalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                DurationPresets.forEach { (label, mins) ->
+                    DurationPill(
+                        label = label,
+                        active = durMins > 0 && durMins == mins,
+                        // A preset that would push the end past 23:59 cannot
+                        // be honored — disable it instead of silently capping.
+                        enabled = d.start.toMins() + mins <= 1439,
+                        onClick = {
+                            vm.updateEventDraft {
+                                it.copy(end = minsToHm((it.start.toMins() + mins).coerceAtMost(1439)))
+                            }
+                        },
+                    )
+                }
             }
         }
         Column(Modifier.padding(top = 15.dp)) {
@@ -144,6 +239,8 @@ fun EventEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 value = d.loc,
                 onValueChange = { v -> vm.updateEventDraft { it.copy(loc = v) } },
                 placeholder = "Optional",
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
             )
         }
         PrimaryButton("Save event", onClick = vm::saveEvent)
@@ -153,5 +250,31 @@ fun EventEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 onClick = vm::deleteEvent,
             )
         }
+    }
+}
+
+/** Duration preset pill — same visual language as the category pills. */
+@Composable
+private fun DurationPill(
+    label: String,
+    active: Boolean,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    val c = LocalBento.current
+    Box(
+        Modifier
+            .alpha(if (enabled) 1f else 0.4f)
+            .pressable(enabled = enabled, onClick = onClick)
+            .background(if (active) c.accTint(0.12f) else c.inp, CircleShape)
+            .border(1.dp, if (active) c.acc else c.bd, CircleShape)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        Text(
+            label,
+            fontSize = 11.5.sp,
+            fontWeight = FontWeight.W600,
+            color = if (active) c.tx else c.sub,
+        )
     }
 }
