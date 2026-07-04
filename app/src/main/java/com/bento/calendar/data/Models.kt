@@ -63,7 +63,37 @@ data class TaskItem(
      * to the next occurrence instead of marking it done.
      */
     val recur: String = Recur.NONE,
+    /** [Priority] level; 0 = none. */
+    val priority: Int = Priority.NONE,
+    /** Checklist steps; repeating tasks reset them when the due date advances. */
+    val subs: List<SubTask> = emptyList(),
 )
+
+@Serializable
+data class SubTask(val id: String, val title: String, val done: Boolean = false)
+
+object Priority {
+    const val NONE = 0
+    const val LOW = 1
+    const val MEDIUM = 2
+    const val HIGH = 3
+    val ALL = listOf(NONE, LOW, MEDIUM, HIGH)
+
+    fun label(p: Int): String = when (p) {
+        LOW -> "Low"
+        MEDIUM -> "Medium"
+        HIGH -> "High"
+        else -> "None"
+    }
+
+    /** Flag tint, or null for [NONE] (no flag drawn). */
+    fun colorHex(p: Int): String? = when (p) {
+        LOW -> "#5BC8D9"
+        MEDIUM -> "#F2C05A"
+        HIGH -> "#EF6D6D"
+        else -> null
+    }
+}
 
 @Serializable
 data class NoteItem(
@@ -92,6 +122,8 @@ data class Prefs(
     val deviceCalsEnabled: Boolean = false,
     /** Device calendar ids the user opted in; empty = all visible calendars. */
     val deviceCalIds: List<Long> = emptyList(),
+    /** Material You: derive the accent from the system wallpaper (Android 12+). */
+    val dynamicColor: Boolean = false,
 )
 
 object Recur {

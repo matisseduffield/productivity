@@ -38,11 +38,15 @@ import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
 import com.bento.calendar.data.AppGraph
+import com.bento.calendar.data.Priority
 import com.bento.calendar.data.TaskItem
 import com.bento.calendar.data.completeTask
+import com.bento.calendar.data.toIso
 import com.bento.calendar.ui.Fmt
+import com.bento.calendar.ui.sortScore
 import com.bento.calendar.ui.sortedOpenTasks
 import com.bento.calendar.ui.theme.BentoColors
+import com.bento.calendar.ui.theme.hexColor
 import kotlinx.coroutines.flow.first
 import java.time.LocalDate
 
@@ -74,7 +78,17 @@ class TasksWidget : GlanceAppWidget() {
             val today = LocalDate.now()
             TasksBody(
                 context = context,
-                tasks = sortedOpenTasks(data.tasks, today),
+                // Mirror TasksScreen exactly: due bucket (overdue/today/
+                // upcoming/someday) stays the PRIMARY key, priority sorts
+                // within the bucket — a high-priority someday task must not
+                // push an overdue one off the widget. Stable sort keeps the
+                // due order within equal (bucket, priority).
+                tasks = sortedOpenTasks(data.tasks, today).sortedWith(
+                    compareBy(
+                        { sortScore(it, today.toIso()).first() },
+                        { -it.priority },
+                    ),
+                ),
                 today = today,
                 c = paletteOf(data),
                 accent = accentOf(data),
@@ -199,12 +213,32 @@ private fun TaskRow(t: TaskItem, today: LocalDate, narrow: Boolean, c: BentoColo
                 ),
         ) {}
         Spacer(GlanceModifier.width(9.dp))
+        // Priority dot: same rounded-Box trick as the UpNext widget's
+        // category dot (Glance has no CircleShape — cornerRadius >= size/2).
+        val prColor = Priority.colorHex(t.priority)?.let { hexColor(it) }
+        if (prColor != null) {
+            Box(
+                modifier = GlanceModifier
+                    .size(6.dp)
+                    .cornerRadius(3.dp)
+                    .background(ColorProvider(prColor)),
+            ) {}
+            Spacer(GlanceModifier.width(5.dp))
+        }
         Text(
             t.title,
             style = TextStyle(color = ColorProvider(c.tx), fontSize = 12.sp),
             maxLines = 1,
             modifier = GlanceModifier.defaultWeight(),
         )
+        if (t.subs.isNotEmpty()) {
+            Spacer(GlanceModifier.width(6.dp))
+            Text(
+                "${t.subs.count { it.done }}/${t.subs.size}",
+                style = TextStyle(color = ColorProvider(c.faint), fontSize = 9.5.sp),
+                maxLines = 1,
+            )
+        }
         val due = t.due
         if (!narrow && due != null) {
             Spacer(GlanceModifier.width(6.dp))

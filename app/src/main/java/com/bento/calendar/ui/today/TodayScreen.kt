@@ -47,6 +47,7 @@ import com.bento.calendar.data.AppData
 import com.bento.calendar.data.DeviceEvent
 import com.bento.calendar.data.EventItem
 import com.bento.calendar.data.NoteItem
+import com.bento.calendar.data.Priority
 import com.bento.calendar.data.TaskItem
 import com.bento.calendar.data.occurrencesOn
 import com.bento.calendar.data.toIso
@@ -419,6 +420,10 @@ private fun TasksTile(
                         size = 17.dp,
                         corner = 6.dp,
                     )
+                    val prColor = Priority.colorHex(t.priority)?.let { hexColor(it) }
+                    if (prColor != null) {
+                        Dot(prColor, size = 5.dp)
+                    }
                     Text(
                         t.title,
                         fontSize = 12.sp,
@@ -428,6 +433,17 @@ private fun TasksTile(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
                     )
+                    if (t.subs.isNotEmpty()) {
+                        // Compact checklist progress — expansion lives on the
+                        // Tasks tab, this tile just surfaces the count.
+                        Text(
+                            "${t.subs.count { it.done }}/${t.subs.size}",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.W600,
+                            color = c.faint,
+                            style = LocalTextStyle.current.copy(fontFeatureSettings = "tnum"),
+                        )
+                    }
                 }
             }
             if (openTasks.size > 3) {

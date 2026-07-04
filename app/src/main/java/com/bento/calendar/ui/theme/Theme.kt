@@ -1,16 +1,19 @@
 package com.bento.calendar.ui.theme
 
+import android.os.Build
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.sp
 import com.bento.calendar.data.Prefs
@@ -18,7 +21,19 @@ import com.bento.calendar.data.Prefs
 @Composable
 fun BentoTheme(prefs: Prefs, content: @Composable () -> Unit) {
     val base = if (prefs.theme == "light") LightColors else DarkColors
-    val colors = base.copy(acc = hexColor(prefs.accent))
+    // Material You: with the toggle on (Android 12+), the accent comes from
+    // the system dynamic palette instead of the picked hex. Always the LIGHT
+    // scheme's primary (tone 40): the app paints white on the accent (Save
+    // buttons, checkmarks, switch knobs), and the dark scheme's tone-80
+    // pastel primary drops that to ~1.7:1 contrast. Tone 40 sits in the same
+    // range as the curated accents, so it reads on both themes. All derived
+    // tints (accTint etc.) flow from `acc`, keeping them consistent.
+    val accent = if (prefs.dynamicColor && Build.VERSION.SDK_INT >= 31) {
+        dynamicLightColorScheme(LocalContext.current).primary
+    } else {
+        hexColor(prefs.accent)
+    }
+    val colors = base.copy(acc = accent)
 
     // Material3 scheme mapped onto the design tokens so the few M3 pieces we
     // use (date/time pickers, dropdown menus) match the app.

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Monochrome (themed icon) variant of the pinwheel bento: the same
+     interlocking tiles as ic_launcher_foreground, flattened to a single
+     colour — the launcher tints it to the wallpaper palette. Geometry is
+     identical to the foreground so the safe zone stays intact. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M38,29 h11 a9,9 0 0 1 9,9 v11 a9,9 0 0 1 -9,9 h-11 a9,9 0 0 1 -9,-9 v-11 a9,9 0 0 1 9,-9 z" />
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M69,29 h3 a7,7 0 0 1 7,7 v3 a7,7 0 0 1 -7,7 h-3 a7,7 0 0 1 -7,-7 v-3 a7,7 0 0 1 7,-7 z" />
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M70,50 h1 a8,8 0 0 1 8,8 v13 a8,8 0 0 1 -8,8 h-1 a8,8 0 0 1 -8,-8 v-13 a8,8 0 0 1 8,-8 z" />
+    <path
+        android:fillColor="@android:color/white"
+        android:fillType="evenOdd"
+        android:pathData="M37,62 h13 a8,8 0 0 1 8,8 v1 a8,8 0 0 1 -8,8 h-13 a8,8 0 0 1 -8,-8 v-1 a8,8 0 0 1 8,-8 z M35.4,70.5 a2.1,2.1 0 1 0 4.2,0 a2.1,2.1 0 1 0 -4.2,0 z M41.4,70.5 a2.1,2.1 0 1 0 4.2,0 a2.1,2.1 0 1 0 -4.2,0 z M47.4,70.5 a2.1,2.1 0 1 0 4.2,0 a2.1,2.1 0 1 0 -4.2,0 z" />
+</vector>

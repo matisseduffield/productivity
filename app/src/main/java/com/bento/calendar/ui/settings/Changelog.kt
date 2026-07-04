@@ -41,6 +41,16 @@ data class ChangelogEntry(val version: String, val date: String, val changes: Li
 
 val CHANGELOG = listOf(
     ChangelogEntry(
+        "2.1.0", "July 2026",
+        listOf(
+            "Quick add: type \"Dentist tue 3pm\" and it becomes an event — plain text becomes a task",
+            "Checklists inside tasks, with progress shown in the list",
+            "Task priorities: flag tasks low, medium or high and they sort first",
+            "Match wallpaper colours — the accent can follow your system palette (Android 12+)",
+            "Themed app icon for Material You home screens",
+        ),
+    ),
+    ChangelogEntry(
         "2.0.0", "July 2026",
         listOf(
             "Custom categories — create, rename and recolor your own",

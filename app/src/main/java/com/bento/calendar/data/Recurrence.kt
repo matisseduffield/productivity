@@ -41,7 +41,8 @@ fun completeTask(data: AppData, taskId: String, today: LocalDate): AppData =
                     Recur.MONTHLY -> anchor.plusMonths(1)
                     else -> anchor
                 }
-                t.copy(due = next.toIso())
+                // The next occurrence starts with a fresh checklist.
+                t.copy(due = next.toIso(), subs = t.subs.map { it.copy(done = false) })
             }
         },
     )

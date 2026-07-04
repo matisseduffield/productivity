@@ -1,5 +1,6 @@
 package com.bento.calendar.ui.settings
 
+import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -27,6 +28,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -118,20 +120,41 @@ fun SettingsOverlay(
                             ThemePill("Light", active = prefs.theme != "dark") { vm.setTheme("light") }
                         }
                     }
+                    // Material You needs the Android 12 dynamic palette APIs.
+                    val dynamicAvailable = Build.VERSION.SDK_INT >= 31
+                    val dynamicOn = dynamicAvailable && prefs.dynamicColor
+                    if (dynamicAvailable) {
+                        SettingsRow(
+                            icon = BentoIcons.Droplet,
+                            title = "Match wallpaper colours",
+                            sub = "Material You — uses your system palette",
+                        ) {
+                            BentoSwitch(
+                                on = prefs.dynamicColor,
+                                onToggle = { vm.toggleDynamicColor() },
+                            )
+                        }
+                    }
                     SettingsRow(
                         icon = BentoIcons.Droplet,
                         title = "Accent colour",
-                        sub = Accents.nameOf(prefs.accent),
+                        sub = if (dynamicOn) "Following your wallpaper · widgets keep this" else Accents.nameOf(prefs.accent),
                         last = true,
                     ) {
+                        // Manual swatches step back while dynamic colour drives
+                        // the accent: dimmed and inert, same as other disabled
+                        // controls, so the choice is preserved for when it's
+                        // switched off.
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                             verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.alpha(if (dynamicOn) 0.4f else 1f),
                         ) {
                             Accents.ALL.forEach { option ->
                                 AccentSwatch(
                                     hex = option.hex,
                                     selected = prefs.accent == option.hex,
+                                    enabled = !dynamicOn,
                                 ) { vm.setAccent(option.hex) }
                             }
                         }
@@ -520,12 +543,17 @@ private fun ThemePill(label: String, active: Boolean, onClick: () -> Unit) {
  * box-shadow, so layout never shifts.
  */
 @Composable
-private fun AccentSwatch(hex: String, selected: Boolean, onClick: () -> Unit) {
+private fun AccentSwatch(
+    hex: String,
+    selected: Boolean,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
     val c = LocalBento.current
     Box(
         Modifier
             .size(25.dp)
-            .pressable(onClick = onClick)
+            .pressable(enabled = enabled, onClick = onClick)
             .drawBehind {
                 if (selected) {
                     val r = size.minDimension / 2f

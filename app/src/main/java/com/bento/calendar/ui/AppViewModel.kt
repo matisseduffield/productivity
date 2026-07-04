@@ -19,8 +19,11 @@ import com.bento.calendar.data.EventItem
 import com.bento.calendar.data.completeTask
 import com.bento.calendar.data.NoteItem
 import com.bento.calendar.data.Prefs
+import com.bento.calendar.data.Priority
 import com.bento.calendar.data.Recur
+import com.bento.calendar.data.SubTask
 import com.bento.calendar.data.TaskItem
+import com.bento.calendar.data.parseQuickAdd
 import com.bento.calendar.data.minsToHm
 import com.bento.calendar.data.newId
 import com.bento.calendar.data.toDate
@@ -76,6 +79,8 @@ data class TaskDraft(
     val due: LocalDate? = null,
     val cat: String = "",
     val recur: String = Recur.NONE,
+    val priority: Int = Priority.NONE,
+    val subs: List<SubTask> = emptyList(),
 )
 
 enum class PinMode { Set, Enter }
@@ -180,7 +185,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private data class WidgetSnapshot(
         val events: List<EventItem>,
-        val openTasks: Int,
+        // Full list, not a count: the Tasks widget renders titles, priorities
+        // and checklist progress, so any task change must push.
+        val tasks: List<TaskItem>,
         val use24h: Boolean,
         val theme: String,
         val accent: String,
@@ -191,7 +198,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun widgetSnapshot(d: AppData) = WidgetSnapshot(
         events = d.events,
-        openTasks = d.tasks.count { !it.done },
+        tasks = d.tasks,
         use24h = d.prefs.use24h,
         theme = d.prefs.theme,
         accent = d.prefs.accent,
@@ -217,8 +224,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 ReminderScheduler.reschedule(getApplication(), d)
                 lastScheduledEvents = d.events
             }
-            // Same idea for the widget: it only shows events, the open-task
-            // count and a few prefs, so gate the push on that projection.
+            // Same idea for the widget: it only shows events, tasks and a
+            // few prefs, so gate the push on that projection.
             val snap = widgetSnapshot(d)
             if (snap != lastPushedWidget) {
                 WidgetSync.push(getApplication())
@@ -592,7 +599,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun openTask(t: TaskItem) {
-        tkDraft = TaskDraft(t.id, t.title, t.due?.toDate(), t.cat, t.recur)
+        tkDraft = TaskDraft(t.id, t.title, t.due?.toDate(), t.cat, t.recur, t.priority, t.subs)
         disarm(Arm.TASK)
         searchOpen = false
         fabOpen = false
@@ -609,7 +616,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      *  draft the user has already put content into. */
     fun quickAddTask() {
         val d = tkDraft
-        if (d != null && (d.id != null || d.title.isNotBlank() || d.due != null || d.cat.isNotBlank())) return
+        if (d != null && (
+                d.id != null || d.title.isNotBlank() || d.due != null ||
+                    d.cat.isNotBlank() || d.priority != Priority.NONE || d.subs.isNotEmpty()
+                )
+        ) {
+            return
+        }
         newTask()
     }
 
@@ -628,6 +641,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 due = d.due?.toIso(),
                 cat = d.cat,
                 recur = d.recur,
+                priority = d.priority,
+                subs = d.subs.map { it.copy(title = it.title.trim()) }.filter { it.title.isNotEmpty() },
             )
             if (i >= 0) {
                 x.copy(tasks = x.tasks.toMutableList().apply { set(i, rec) })
@@ -644,6 +659,48 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             mut { x -> x.copy(tasks = x.tasks.filter { it.id != id }) }
             tkDraft = null
         }
+    }
+
+    /** Check a checklist step off directly from a task row (not the editor). */
+    fun toggleSub(taskId: String, subId: String) {
+        mut { x ->
+            x.copy(tasks = x.tasks.map { t ->
+                if (t.id != taskId) t
+                else t.copy(subs = t.subs.map { s ->
+                    if (s.id == subId) s.copy(done = !s.done) else s
+                })
+            })
+        }
+    }
+
+    // ---- Natural-language quick add ----
+    /**
+     * "Dentist tue 3pm" → event; "Buy milk fri" → dated task; bare text →
+     * undated task. Returns false when nothing parseable was typed. The
+     * live-preview chips call [parseQuickAdd] directly; this is the commit.
+     */
+    fun commitQuickAdd(raw: String): Boolean {
+        val pf = prefs()
+        val p = parseQuickAdd(raw, today(), pf.durDef) ?: return false
+        if (p.start != null) {
+            val ev = EventItem(
+                id = newId(),
+                title = p.title,
+                date = (p.date ?: today()).toIso(),
+                start = p.start,
+                end = p.end!!,
+                // categoryOf: "personal" may have been deleted from the
+                // user's categories — never mint a dangling id.
+                cat = data.value?.categoryOf(Cats.PERSONAL)?.id ?: Cats.PERSONAL,
+                remind = pf.remindDef,
+            )
+            mut { x -> x.copy(events = x.events + ev) }
+        } else {
+            val tk = TaskItem(id = newId(), title = p.title, due = p.date?.toIso())
+            mut { x -> x.copy(tasks = x.tasks + tk) }
+        }
+        fabOpen = false
+        return true
     }
 
     fun toggleDoneOpen() {
@@ -971,6 +1028,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setTheme(theme: String) = mutPrefs { it.copy(theme = theme) }
     fun setAccent(hex: String) = mutPrefs { it.copy(accent = hex) }
+    fun toggleDynamicColor() = mutPrefs { it.copy(dynamicColor = !it.dynamicColor) }
     fun toggle24h() = mutPrefs { it.copy(use24h = !it.use24h) }
     fun toggleMonday() = mutPrefs { it.copy(monday = !it.monday) }
     fun setRemindDef(v: Int?) = mutPrefs { it.copy(remindDef = v) }
@@ -1311,7 +1369,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     if (it.recur in knownRecur) it else it.copy(recur = Recur.NONE)
                 },
                 tasks = decoded.tasks.map {
-                    if (it.recur in knownRecur) it else it.copy(recur = Recur.NONE)
+                    it.copy(
+                        recur = if (it.recur in knownRecur) it.recur else Recur.NONE,
+                        priority = it.priority.coerceIn(Priority.NONE, Priority.HIGH),
+                    )
                 },
                 prefs = decoded.prefs.copy(
                     accent = accent,
