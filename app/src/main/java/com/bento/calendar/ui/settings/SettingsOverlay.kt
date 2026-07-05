@@ -316,12 +316,15 @@ fun SettingsOverlay(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
+                            // Both verify the current PIN (or a biometric)
+                            // first — otherwise anyone holding the unlocked
+                            // phone could swap or drop it and read the notes.
                             TextLink(
                                 if (hasPin) "Change" else "Set PIN",
-                                onClick = { vm.startSetPin() },
+                                onClick = { vm.startChangePin() },
                             )
                             if (hasPin) {
-                                TextLink("Remove", onClick = { vm.removePin() }, color = c.dng)
+                                TextLink("Remove", onClick = { vm.startRemovePin() }, color = c.dng)
                             }
                         }
                     }

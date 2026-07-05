@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.bento.calendar.ui.AppViewModel
 import com.bento.calendar.ui.PinMode
+import com.bento.calendar.ui.PinThen
 import com.bento.calendar.ui.components.BentoSheet
 import com.bento.calendar.ui.components.pressable
 import com.bento.calendar.ui.theme.LocalBento
@@ -45,8 +46,19 @@ fun PinSheet(vm: AppViewModel) {
 
     BentoSheet(onDismiss = vm::pinCancel) {
         // ---- Title + sub (.sh-t / .bt-m) ----
+        val title = when {
+            ctx.mode == PinMode.Set -> "Create a PIN"
+            ctx.then is PinThen.ChangePin || ctx.then is PinThen.RemovePin -> "Enter current PIN"
+            else -> "Enter PIN"
+        }
+        val sub = when {
+            ctx.mode == PinMode.Set -> "Protects your locked notes"
+            ctx.then is PinThen.ChangePin -> "Then you'll choose a new one"
+            ctx.then is PinThen.RemovePin -> "Locked notes will ask for a new PIN"
+            else -> "Unlock “${ctx.noteTitle}”"
+        }
         Text(
-            if (ctx.mode == PinMode.Set) "Create a PIN" else "Enter PIN",
+            title,
             fontSize = 16.sp,
             fontWeight = FontWeight.W700,
             color = c.tx,
@@ -54,7 +66,7 @@ fun PinSheet(vm: AppViewModel) {
             modifier = Modifier.fillMaxWidth(),
         )
         Text(
-            if (ctx.mode == PinMode.Set) "Protects your locked notes" else "Unlock “${ctx.noteTitle}”",
+            sub,
             fontSize = 12.sp,
             color = c.sub,
             textAlign = TextAlign.Center,

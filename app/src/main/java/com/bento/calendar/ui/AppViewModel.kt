@@ -92,6 +92,12 @@ enum class PinMode { Set, Enter }
 sealed interface PinThen {
     data class OpenNote(val id: String) : PinThen
     data class LockNote(val id: String) : PinThen
+
+    /** Verified Enter → roll straight into a Set sheet for the new PIN. */
+    data object ChangePin : PinThen
+
+    /** Verified Enter → drop the PIN from the store. */
+    data object RemovePin : PinThen
     data object None : PinThen
 }
 
@@ -885,13 +891,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun finishPin(ctx: PinCtx) {
-        val noteId = when (val t = ctx.then) {
-            is PinThen.OpenNote -> t.id
-            is PinThen.LockNote -> t.id
-            PinThen.None -> null
+        when (val t = ctx.then) {
+            is PinThen.OpenNote -> {
+                unlocked = unlocked + t.id
+                openNoteId = t.id
+            }
+            is PinThen.LockNote -> unlocked = unlocked + t.id
+            PinThen.ChangePin -> {
+                // Verified — hand over to a fresh Set sheet for the new PIN.
+                pinBuf = ""
+                pinErr = false
+                pinCtx = PinCtx(PinMode.Set, PinThen.None, "")
+                return
+            }
+            PinThen.RemovePin -> {
+                mut { it.copy(pin = null) }
+                unlocked = emptySet()
+            }
+            PinThen.None -> {}
         }
-        if (noteId != null) unlocked = unlocked + noteId
-        if (ctx.then is PinThen.OpenNote) openNoteId = noteId
         pinBuf = ""
         pinCtx = null
     }
@@ -956,7 +974,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // unlock the NOTE while the lock overlay stays. The PIN sheet's link
         // re-offers biometrics once the app lock clears.
         if (appLocked) return
-        bioPrompt?.invoke("Unlock note", ctx.noteTitle.ifEmpty { null }, false) {
+        val title = when (ctx.then) {
+            PinThen.ChangePin, PinThen.RemovePin -> "Verify it's you"
+            else -> "Unlock note"
+        }
+        bioPrompt?.invoke(title, ctx.noteTitle.ifEmpty { null }, false) {
             // Re-read: the sheet may have been dismissed while the system
             // prompt was up; finishing a stale ctx would unlock the wrong UI.
             val current = pinCtx ?: return@invoke
@@ -964,16 +986,37 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Settings: set or change the PIN. */
+    /** Settings: first-time PIN setup (no existing PIN to prove). */
     fun startSetPin() {
         pinCtx = PinCtx(PinMode.Set, PinThen.None, "")
         pinBuf = ""
         pinErr = false
     }
 
-    fun removePin() {
-        mut { it.copy(pin = null) }
-        unlocked = emptySet()
+    /**
+     * Settings: change the PIN — proves knowledge of the current one first
+     * (or a biometric, same trust as note unlock), then rolls into Set.
+     * Without this gate anyone holding the unlocked phone could swap the PIN
+     * and read every locked note through the new one.
+     */
+    fun startChangePin() {
+        if (data.value?.pin == null) {
+            startSetPin()
+            return
+        }
+        pinCtx = PinCtx(PinMode.Enter, PinThen.ChangePin, "")
+        pinBuf = ""
+        pinErr = false
+        requestNoteBio()
+    }
+
+    /** Settings: remove the PIN — verification-gated like [startChangePin]. */
+    fun startRemovePin() {
+        if (data.value?.pin == null) return
+        pinCtx = PinCtx(PinMode.Enter, PinThen.RemovePin, "")
+        pinBuf = ""
+        pinErr = false
+        requestNoteBio()
     }
 
     // ---- Categories ----

@@ -18,8 +18,8 @@ android {
         // CI overrides these from the release tag (VERSION_NAME / VERSION_CODE
         // env) so the built APK's version always matches the tag it ships under
         // — a mismatch would make the app see itself as perpetually outdated.
-        versionCode = (System.getenv("VERSION_CODE") ?: "20300").toInt()
-        versionName = System.getenv("VERSION_NAME") ?: "2.3.0"
+        versionCode = (System.getenv("VERSION_CODE") ?: "20301").toInt()
+        versionName = System.getenv("VERSION_NAME") ?: "2.3.1"
     }
 
     signingConfigs {

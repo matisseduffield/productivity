@@ -41,6 +41,12 @@ data class ChangelogEntry(val version: String, val date: String, val changes: Li
 
 val CHANGELOG = listOf(
     ChangelogEntry(
+        "2.3.1", "July 2026",
+        listOf(
+            "Changing or removing your notes PIN now asks for the current PIN (or your fingerprint) first",
+        ),
+    ),
+    ChangelogEntry(
         "2.3.0", "July 2026",
         listOf(
             "Unlock private notes with your fingerprint or face — the PIN stays as backup",
