@@ -26,6 +26,7 @@ import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -35,6 +36,7 @@ import com.bento.calendar.data.AppData
 import com.bento.calendar.data.NoteItem
 import com.bento.calendar.ui.AppViewModel
 import com.bento.calendar.ui.Fmt
+import com.bento.calendar.ui.components.Dot
 import com.bento.calendar.ui.components.EmptyText
 import com.bento.calendar.ui.components.GBtn
 import com.bento.calendar.ui.components.SectionLabel
@@ -44,6 +46,7 @@ import com.bento.calendar.ui.components.hairlineBottom
 import com.bento.calendar.ui.components.tap
 import com.bento.calendar.ui.theme.BentoIcons
 import com.bento.calendar.ui.theme.LocalBento
+import com.bento.calendar.ui.theme.hexColor
 import java.time.LocalDateTime
 
 /**
@@ -178,6 +181,19 @@ private fun PinnedLabel() {
     )
 }
 
+/**
+ * Note tile fill: the note's colour at 16% composited over the plain tile
+ * (the calendar's deviceTint idiom), or the plain tile when uncoloured.
+ * Locked notes keep their tint — the colour itself is not sensitive.
+ */
+@Composable
+private fun noteTileBg(note: NoteItem): Color {
+    val c = LocalBento.current
+    return note.colorHex
+        ?.let { hexColor(it).copy(alpha = 0.16f).compositeOver(c.tile) }
+        ?: c.tile
+}
+
 /** Locked notes never leak content into previews. */
 private fun preview(n: NoteItem): String {
     if (n.locked) return "•••• •••• ••••"
@@ -196,7 +212,7 @@ private fun PinnedCard(note: NoteItem, onTap: () -> Unit, modifier: Modifier = M
     Column(
         modifier
             .tap(onClick = onTap)
-            .background(c.tile, RoundedCornerShape(16.dp))
+            .background(noteTileBg(note), RoundedCornerShape(16.dp))
             .border(1.dp, c.bd, RoundedCornerShape(16.dp))
             .padding(13.dp)
             // Inside the padding: the prototype's min-height:88px is content-box.
@@ -249,7 +265,7 @@ private fun NoteRow(note: NoteItem, stamp: String, onTap: () -> Unit) {
         Box(
             Modifier
                 .size(37.dp)
-                .background(c.tile, RoundedCornerShape(12.dp))
+                .background(noteTileBg(note), RoundedCornerShape(12.dp))
                 .border(1.dp, c.bd, RoundedCornerShape(12.dp)),
             contentAlignment = Alignment.Center,
         ) {
@@ -278,11 +294,19 @@ private fun NoteRow(note: NoteItem, stamp: String, onTap: () -> Unit) {
                 modifier = Modifier.padding(top = 2.dp),
             )
         }
-        Text(
-            stamp,
-            fontSize = 10.sp,
-            color = c.faint,
-            style = LocalTextStyle.current.copy(fontFeatureSettings = "tnum"),
-        )
+        // Dot + stamp: the colour reads here even for locked notes, whose
+        // body preview is hidden.
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            note.colorHex?.let { Dot(hexColor(it), size = 8.dp) }
+            Text(
+                stamp,
+                fontSize = 10.sp,
+                color = c.faint,
+                style = LocalTextStyle.current.copy(fontFeatureSettings = "tnum"),
+            )
+        }
     }
 }

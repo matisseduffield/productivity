@@ -172,6 +172,13 @@ fun SettingsOverlay(
                         BentoSwitch(on = prefs.use24h, onToggle = { vm.toggle24h() })
                     }
                     SettingsRow(
+                        icon = BentoIcons.SettingsChecklist,
+                        title = "Tasks on the calendar",
+                        sub = "Due tasks show alongside events",
+                    ) {
+                        BentoSwitch(on = prefs.tasksOnCalendar, onToggle = { vm.toggleTasksOnCalendar() })
+                    }
+                    SettingsRow(
                         icon = BentoIcons.SettingsCalendar,
                         title = "Week starts Monday",
                         sub = "All calendar views",
@@ -355,6 +362,18 @@ fun SettingsOverlay(
                 // ---- Data ----
                 SectionLabel("Data")
                 SettingsCard {
+                    val trashCount = data.trash.size
+                    SettingsRow(
+                        icon = BentoIcons.SettingsChecklist,
+                        title = "Trash",
+                        sub = when {
+                            trashCount == 0 -> "Deleted items stay here for 30 days"
+                            trashCount == 1 -> "1 item"
+                            else -> "$trashCount items"
+                        },
+                    ) {
+                        TextLink("Open", onClick = { vm.openTrash() })
+                    }
                     SettingsRow(
                         icon = BentoIcons.Download,
                         title = "Export data",

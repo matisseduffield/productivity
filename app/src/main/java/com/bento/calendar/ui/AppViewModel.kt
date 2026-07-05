@@ -23,6 +23,8 @@ import com.bento.calendar.data.Priority
 import com.bento.calendar.data.Recur
 import com.bento.calendar.data.SubTask
 import com.bento.calendar.data.TaskItem
+import com.bento.calendar.data.Trash
+import com.bento.calendar.data.TrashEntry
 import com.bento.calendar.data.parseQuickAdd
 import com.bento.calendar.data.minsToHm
 import com.bento.calendar.data.newId
@@ -110,6 +112,7 @@ object Arm {
     const val TASK = "tk"
     const val CLEAR = "clear"
     const val RESET = "reset"
+    const val TRASH = "trash"
 }
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
@@ -180,6 +183,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // at launch, so the first mutation only pushes if it changed
             // something widget-relevant.
             lastPushedWidget = widgetSnapshot(d)
+            // Trash retention: purge entries past the window once per launch.
+            val cutoff = System.currentTimeMillis() - Trash.RETENTION_DAYS * 86_400_000L
+            if (d.trash.any { it.deletedAt < cutoff }) {
+                mut { x -> x.copy(trash = x.trash.filter { it.deletedAt >= cutoff }) }
+            }
         }
         // NOTE: the automatic update check is kicked off from MainActivity, not
         // here — the update state properties are declared below this init block
@@ -317,6 +325,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             fabOpen -> fabOpen = false
             searchOpen -> closeSearch()
             openNoteId != null -> closeNote()
+            trashOpen -> trashOpen = false
             categoriesOpen -> categoriesOpen = false
             changelogOpen -> changelogOpen = false
             settingsOpen -> settingsOpen = false
@@ -326,7 +335,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun hasOverlay(): Boolean =
         pinCtx != null || evDraft != null || tkDraft != null || fabOpen ||
             searchOpen || openNoteId != null || settingsOpen || changelogOpen ||
-            categoriesOpen
+            categoriesOpen || trashOpen
 
     // ---- Calendar ----
 
@@ -589,7 +598,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val id = d.id ?: return
         twoTap(Arm.EVENT) {
             if (d.scope == EditScope.Single && d.occurrenceDate != null) {
-                // Skip just this occurrence; the series lives on.
+                // Skip just this occurrence; the series lives on. Not a real
+                // deletion, so nothing goes to the trash.
                 val exDate = d.occurrenceDate.toIso()
                 mut { x ->
                     x.copy(events = x.events.map {
@@ -597,7 +607,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     })
                 }
             } else {
-                mut { x -> x.copy(events = x.events.filter { it.id != id }) }
+                mut { x ->
+                    val victim = x.events.firstOrNull { it.id == id }
+                    val next = x.copy(events = x.events.filter { it.id != id })
+                    if (victim != null) next.withTrashed(trashEntry(e = victim)) else next
+                }
             }
             evDraft = null
         }
@@ -629,12 +643,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         mut { completeTask(it, id, today()) }
     }
 
-    fun openTask(t: TaskItem) {
+    /**
+     * [switchTab] navigates to the Tasks tab under the sheet — right for
+     * search results ("take me to it"), wrong for the calendar's task rows,
+     * where dismissing the editor should land back on the calendar.
+     */
+    fun openTask(t: TaskItem, switchTab: Boolean = true) {
         tkDraft = TaskDraft(t.id, t.title, t.due?.toDate(), t.cat, t.recur, t.priority, t.subs, t.remindAt)
         disarm(Arm.TASK)
         searchOpen = false
         fabOpen = false
-        tabState = Tab.Tasks
+        if (switchTab) tabState = Tab.Tasks
     }
 
     fun newTask() {
@@ -689,7 +708,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteTask() {
         val id = tkDraft?.id ?: return
         twoTap(Arm.TASK) {
-            mut { x -> x.copy(tasks = x.tasks.filter { it.id != id }) }
+            mut { x ->
+                val victim = x.tasks.firstOrNull { it.id == id }
+                val next = x.copy(tasks = x.tasks.filter { it.id != id })
+                if (victim != null) next.withTrashed(trashEntry(t = victim)) else next
+            }
             tkDraft = null
         }
     }
@@ -749,7 +772,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (data.value?.tasks?.none { it.done } != false) return
         twoTap(Arm.CLEAR) {
             dismissUndo()
-            mut { x -> x.copy(tasks = x.tasks.filter { !it.done }) }
+            mut { x ->
+                val done = x.tasks.filter { it.done }
+                x.copy(tasks = x.tasks.filter { !it.done })
+                    .withTrashed(*done.map { trashEntry(t = it) }.toTypedArray())
+            }
         }
     }
 
@@ -835,7 +862,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteNote() {
         val id = openNoteId ?: return
         twoTap(Arm.NOTE) {
-            mut { x -> x.copy(notes = x.notes.filter { it.id != id }) }
+            mut { x ->
+                val victim = x.notes.firstOrNull { it.id == id }
+                val next = x.copy(notes = x.notes.filter { it.id != id })
+                if (victim != null) next.withTrashed(trashEntry(n = victim)) else next
+            }
             openNoteId = null
         }
     }
@@ -1179,6 +1210,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun toggleDynamicColor() = mutPrefs { it.copy(dynamicColor = !it.dynamicColor) }
     fun toggleBioNotes() = mutPrefs { it.copy(bioNotes = !it.bioNotes) }
     fun toggleAppLock() = mutPrefs { it.copy(appLock = !it.appLock) }
+    fun toggleTasksOnCalendar() = mutPrefs { it.copy(tasksOnCalendar = !it.tasksOnCalendar) }
+
+    /** Note tile tint; null returns to the plain tile. */
+    fun setNoteColor(hex: String?) {
+        val id = openNoteId ?: return
+        mut { x ->
+            x.copy(notes = x.notes.map { if (it.id == id) it.copy(colorHex = hex) else it })
+        }
+    }
     fun toggle24h() = mutPrefs { it.copy(use24h = !it.use24h) }
     fun toggleMonday() = mutPrefs { it.copy(monday = !it.monday) }
     fun setRemindDef(v: Int?) = mutPrefs { it.copy(remindDef = v) }
@@ -1188,9 +1228,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun resetApp() {
         twoTap(Arm.RESET) {
             // "Erase all events, tasks and notes" — keep theme, prefs and PIN,
-            // which the label doesn't claim to touch.
+            // which the label doesn't claim to touch. The trash goes too:
+            // it holds exactly the content the label claims to erase, and a
+            // privacy wipe that leaves restorable copies isn't a wipe.
             dismissUndo()
-            mut { it.copy(events = emptyList(), tasks = emptyList(), notes = emptyList()) }
+            mut {
+                it.copy(
+                    events = emptyList(),
+                    tasks = emptyList(),
+                    notes = emptyList(),
+                    trash = emptyList(),
+                )
+            }
             unlocked = emptySet()
             openNoteId = null
             doneOpen = false
@@ -1310,12 +1359,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Swipe-left on a task row: delete with undo, restored at its old spot. */
     fun deleteTaskBySwipe(t: TaskItem) {
         val idx = data.value?.tasks?.indexOfFirst { it.id == t.id } ?: -1
-        mut { x -> x.copy(tasks = x.tasks.filter { it.id != t.id }) }
+        mut { x -> x.copy(tasks = x.tasks.filter { it.id != t.id }).withTrashed(trashEntry(t = t)) }
         offerUndo("task") { x ->
             if (x.tasks.any { it.id == t.id }) {
                 x
             } else {
                 x.copy(
+                    // Undo pulls the item back OUT of the trash too.
+                    trash = x.trash.filterNot { it.task?.id == t.id },
                     tasks = if (idx < 0) {
                         x.tasks + t
                     } else {
@@ -1329,12 +1380,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Swipe-left on an (unlocked) note row: delete with undo. */
     fun deleteNoteBySwipe(n: NoteItem) {
         val idx = data.value?.notes?.indexOfFirst { it.id == n.id } ?: -1
-        mut { x -> x.copy(notes = x.notes.filter { it.id != n.id }) }
+        mut { x -> x.copy(notes = x.notes.filter { it.id != n.id }).withTrashed(trashEntry(n = n)) }
         offerUndo("note") { x ->
             if (x.notes.any { it.id == n.id }) {
                 x
             } else {
                 x.copy(
+                    trash = x.trash.filterNot { it.note?.id == n.id },
                     notes = if (idx < 0) {
                         x.notes + n
                     } else {
@@ -1342,6 +1394,50 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     },
                 )
             }
+        }
+    }
+
+    // ---- Trash ----
+    var trashOpen by mutableStateOf(false)
+        private set
+
+    fun openTrash() {
+        trashOpen = true
+        disarm(Arm.TRASH)
+    }
+
+    fun closeTrash() {
+        trashOpen = false
+    }
+
+    /** Prepend entries (newest first), capped so the store can't balloon. */
+    private fun AppData.withTrashed(vararg entries: TrashEntry): AppData =
+        copy(trash = (entries.toList() + trash).take(Trash.MAX_ENTRIES))
+
+    private fun trashEntry(
+        e: EventItem? = null,
+        t: TaskItem? = null,
+        n: NoteItem? = null,
+    ) = TrashEntry(deletedAt = System.currentTimeMillis(), event = e, task = t, note = n)
+
+    /** Put a trashed item back; ids are UUIDs so collisions mean "already back". */
+    fun restoreTrash(entry: TrashEntry) {
+        mut { x ->
+            var d = x.copy(trash = x.trash - entry)
+            entry.event?.let { e -> if (d.events.none { it.id == e.id }) d = d.copy(events = d.events + e) }
+            entry.task?.let { t -> if (d.tasks.none { it.id == t.id }) d = d.copy(tasks = d.tasks + t) }
+            entry.note?.let { n -> if (d.notes.none { it.id == n.id }) d = d.copy(notes = d.notes + n) }
+            d
+        }
+    }
+
+    fun emptyTrash() {
+        if (data.value?.trash?.isEmpty() != false) return
+        twoTap(Arm.TRASH) {
+            // A live undo banner could resurrect an item the user just
+            // deleted forever — same discipline as clearCompleted/resetApp.
+            dismissUndo()
+            mut { it.copy(trash = emptyList()) }
         }
     }
 
@@ -1535,6 +1631,29 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         },
                     )
                 },
+                notes = decoded.notes.map { n ->
+                    n.copy(colorHex = n.colorHex?.takeIf { it.removePrefix("#").toLongOrNull(16) != null })
+                },
+                // Trash entries must hold exactly one restorable item that
+                // passes the SAME validation as the live lists — restore
+                // feeds them straight back in, where a bad "9:00" start or
+                // garbage remindAt crash-loops every render/reschedule with
+                // no recovery. Bad entries drop (it's trash).
+                trash = decoded.trash.filter { entry ->
+                    listOfNotNull(entry.event, entry.task, entry.note).size == 1 &&
+                        runCatching {
+                            entry.event?.let { ev ->
+                                ev.date.toDate()
+                                ev.endDate?.toDate()
+                                require(ev.end.toMins() > ev.start.toMins() || ev.spanEnd() != null)
+                                ev.exDates.forEach { it.toDate() }
+                            }
+                            entry.task?.let { t ->
+                                t.due?.toDate()
+                                t.remindAt?.toMins()
+                            }
+                        }.isSuccess
+                }.take(Trash.MAX_ENTRIES),
                 prefs = decoded.prefs.copy(
                     accent = accent,
                     durDef = decoded.prefs.durDef.coerceAtLeast(1),

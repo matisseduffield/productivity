@@ -41,6 +41,14 @@ data class ChangelogEntry(val version: String, val date: String, val changes: Li
 
 val CHANGELOG = listOf(
     ChangelogEntry(
+        "2.4.0", "July 2026",
+        listOf(
+            "Trash: deleted events, tasks and notes stay restorable for 30 days (Settings → Data)",
+            "Note colors — tint your notes from the palette in the note editor",
+            "Tasks with due dates now show in the Month and Day views, with a checkbox right there",
+        ),
+    ),
+    ChangelogEntry(
         "2.3.1", "July 2026",
         listOf(
             "Changing or removing your notes PIN now asks for the current PIN (or your fingerprint) first",

@@ -19,6 +19,8 @@ data class AppData(
     /** User-editable categories; defaults to the classic four so pre-2.0
      *  stores and backups load unchanged. */
     val categories: List<Category> = Cats.DEFAULTS,
+    /** Soft-deleted items, newest first; see [TrashEntry]. */
+    val trash: List<TrashEntry> = emptyList(),
 ) {
     /** Category lookup with a stable fallback (first category) so orphaned
      *  ids from deleted categories never crash rendering. */
@@ -123,7 +125,29 @@ data class NoteItem(
     val locked: Boolean = false,
     /** Epoch millis of last edit. */
     val updated: Long,
+    /** Tile tint from [Cats.PALETTE]; null = the plain tile color. */
+    val colorHex: String? = null,
 )
+
+/**
+ * A soft-deleted item awaiting restore or purge — exactly one of the three
+ * is non-null. Entries older than [Trash.RETENTION_DAYS] purge on launch.
+ */
+@Serializable
+data class TrashEntry(
+    val deletedAt: Long,
+    val event: EventItem? = null,
+    val task: TaskItem? = null,
+    val note: NoteItem? = null,
+) {
+    val title: String
+        get() = event?.title ?: task?.title ?: note?.title?.ifEmpty { "Untitled" } ?: ""
+}
+
+object Trash {
+    const val RETENTION_DAYS = 30L
+    const val MAX_ENTRIES = 200
+}
 
 @Serializable
 data class Prefs(
@@ -147,6 +171,8 @@ data class Prefs(
     val bioNotes: Boolean = true,
     /** Require biometric/device unlock when the app opens. */
     val appLock: Boolean = false,
+    /** Show due tasks in the calendar views alongside events. */
+    val tasksOnCalendar: Boolean = true,
 )
 
 object Recur {

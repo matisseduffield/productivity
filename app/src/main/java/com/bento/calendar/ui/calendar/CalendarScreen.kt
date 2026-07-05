@@ -76,7 +76,9 @@ import androidx.compose.ui.zIndex
 import com.bento.calendar.data.AppData
 import com.bento.calendar.data.DeviceEvent
 import com.bento.calendar.data.EventItem
+import com.bento.calendar.data.Priority
 import com.bento.calendar.data.Recur
+import com.bento.calendar.data.TaskItem
 import com.bento.calendar.data.minsToHm
 import com.bento.calendar.data.occurrencesOn
 import com.bento.calendar.data.toIso
@@ -84,6 +86,7 @@ import com.bento.calendar.data.toMins
 import com.bento.calendar.ui.AppViewModel
 import com.bento.calendar.ui.CalView
 import com.bento.calendar.ui.Fmt
+import com.bento.calendar.ui.components.BentoCheckbox
 import com.bento.calendar.ui.components.BentoSheet
 import com.bento.calendar.ui.components.Dot
 import com.bento.calendar.ui.components.EmptyText
@@ -158,7 +161,11 @@ private fun CalendarBody(
             CalView.Day -> {
                 if (vm.selDate == today && nowMin in 360..1380) {
                     // 06:00 grid at 56dp/hour, ~160dp headroom above the line.
-                    val targetDp = ((nowMin - 360) / 60f) * 56f - 160f
+                    // The due-task strip sits above the grid (~36dp/row), so
+                    // its height joins the target or the now-line drifts a row
+                    // lower per task.
+                    val stripDp = dueTasksOn(data, vm.selDate).size * 36f
+                    val targetDp = stripDp + ((nowMin - 360) / 60f) * 56f - 160f
                     val target = with(density) { targetDp.dp.toPx() }.toInt().coerceAtLeast(0)
                     scrollState.animateScrollTo(target)
                 }
@@ -386,6 +393,67 @@ private data class GridBlock(
 private fun deviceTint(color: Color): Color =
     color.copy(alpha = 0.28f).compositeOver(LocalBento.current.tile)
 
+/**
+ * OPEN tasks due on [date], priority-high-first (stable, like the Tasks tab
+ * sections) — empty when the tasks-on-calendar pref is off, so every task
+ * surface in this file disappears with the toggle. Done tasks never render
+ * on the calendar; completing one repeats through [AppViewModel.toggleTask]
+ * (repeating tasks advance their due date) and the row drops out on the
+ * store update.
+ */
+private fun dueTasksOn(data: AppData, date: LocalDate): List<TaskItem> =
+    if (!data.prefs.tasksOnCalendar) emptyList()
+    else data.tasks
+        .filter { !it.done && it.due == date.toIso() }
+        .sortedByDescending { it.priority }
+
+/**
+ * One calendar task row (Month agenda + Day strip): mini checkbox — the
+ * giveaway that this is a task, not an event — then priority dot when set,
+ * title, and the compact checklist count. The checkbox completes the task
+ * (with [BentoCheckbox]'s usual haptic); tapping the row body opens the
+ * task editor. Expansion and swipe actions stay on the Tasks tab.
+ */
+@Composable
+private fun CalendarTaskRow(vm: AppViewModel, t: TaskItem) {
+    val c = LocalBento.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .tap { vm.openTask(t, switchTab = false) }
+            .hairlineBottom(c.line)
+            .padding(horizontal = 2.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+        BentoCheckbox(
+            checked = t.done,
+            onToggle = { vm.toggleTask(t.id) },
+            size = 17.dp,
+            corner = 6.dp,
+        )
+        Priority.colorHex(t.priority)?.let { Dot(hexColor(it), size = 5.dp) }
+        Text(
+            t.title,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.W500,
+            color = c.tx,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (t.subs.isNotEmpty()) {
+            Text(
+                "${t.subs.count { it.done }}/${t.subs.size}",
+                fontSize = 10.sp,
+                fontWeight = FontWeight.W600,
+                color = c.faint,
+                style = LocalTextStyle.current.copy(fontFeatureSettings = "tnum"),
+            )
+        }
+    }
+}
+
 /** Day-number pill: today = accent/white, selected (week header) = tile bg + 1dp inset border. */
 @Composable
 private fun DayNumberPill(day: Int, isToday: Boolean, isSelected: Boolean) {
@@ -499,15 +567,26 @@ private fun MonthView(
     val agenda = (selEvs.map { GridBlock(it, null, it.start.toMins(), it.end.toMins()) } +
         selDev.map { GridBlock(null, it, it.start.toMins(), it.end.toMins()) })
         .sortedBy { it.startMin }
+    // Open tasks due the selected day trail the timed rows (tasks have no
+    // time-of-day, so they can't interleave meaningfully). Computed inline
+    // like the agenda above — no memo to go stale — and empty (zero UI, label
+    // untouched) when none are due or the pref is off.
+    val dueTasks = dueTasksOn(data, selDate)
+    val evCount = when {
+        agenda.isEmpty() -> "no events"
+        agenda.size == 1 -> "1 event"
+        else -> "${agenda.size} events"
+    }
+    val taskCount = "${dueTasks.size} " + if (dueTasks.size == 1) "task" else "tasks"
     SectionLabel(
         Fmt.dayShort(selDate),
         count = when {
-            agenda.isEmpty() -> "no events"
-            agenda.size == 1 -> "1 event"
-            else -> "${agenda.size} events"
+            dueTasks.isEmpty() -> evCount
+            agenda.isEmpty() -> taskCount
+            else -> "$evCount · $taskCount"
         },
     )
-    if (agenda.isEmpty()) {
+    if (agenda.isEmpty() && dueTasks.isEmpty()) {
         EmptyText("Nothing scheduled — tap + to add an event.")
     } else {
         agenda.forEach { b ->
@@ -519,6 +598,7 @@ private fun MonthView(
                 DeviceAgendaRow(data, dev, onTap = { onDeviceTap(dev) })
             }
         }
+        dueTasks.forEach { t -> CalendarTaskRow(vm, t) }
     }
 }
 
@@ -544,6 +624,12 @@ private fun MonthCell(
     val devColors = vm.deviceEvents[date.toIso()].orEmpty()
         .map { hexColor(it.colorHex) }.distinct().filterNot { it in catColors }
     val dots = (catColors + devColors).take(3)
+    // One hollow ring after the event dots marks a day with open due tasks —
+    // the outline (vs the solid event dots) is the task tell, echoing the
+    // unchecked checkbox in the agenda. Gated on the pref; task-free days
+    // add nothing.
+    val hasDueTasks = data.prefs.tasksOnCalendar &&
+        data.tasks.any { !it.done && it.due == date.toIso() }
     Column(
         modifier
             .aspectRatio(0.92f)
@@ -574,6 +660,9 @@ private fun MonthCell(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             dots.forEach { Dot(it, size = 4.dp) }
+            if (hasDueTasks) {
+                Box(Modifier.size(5.dp).border(1.dp, c.faint, CircleShape))
+            }
         }
     }
 }
@@ -1105,6 +1194,20 @@ private fun DayView(
                     )
                 }
             }
+        }
+    }
+
+    // Open tasks due this day: a compact strip between the all-day pills and
+    // the timed grid — tasks have no time-of-day, so they never enter the
+    // grid or its overlap layout. Memoized SEPARATELY from the events memo
+    // above (own keys: tasks + pref) so a toggle or pref flip re-filters
+    // immediately while the 15s clock tick still skips the work.
+    val dueTasks = remember(data.tasks, selDate, data.prefs.tasksOnCalendar) {
+        dueTasksOn(data, selDate)
+    }
+    if (dueTasks.isNotEmpty()) {
+        Column(Modifier.fillMaxWidth().padding(top = 10.dp)) {
+            dueTasks.forEach { t -> CalendarTaskRow(vm, t) }
         }
     }
 
