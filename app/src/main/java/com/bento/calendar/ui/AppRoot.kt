@@ -58,6 +58,8 @@ fun AppRoot(
     vm: AppViewModel,
     onExport: () -> Unit = {},
     onImport: () -> Unit = {},
+    onCalendarExport: () -> Unit = {},
+    onCalendarImport: () -> Unit = {},
 ) {
     val data by vm.data.collectAsState()
     val now by vm.now.collectAsState()
@@ -121,7 +123,15 @@ fun AppRoot(
             // Overlay stack, prototype z-order: full-page overlays, then search,
             // then bottom sheets on top.
             if (vm.openNoteId != null) NoteEditorOverlay(vm, d, now)
-            if (vm.settingsOpen) SettingsOverlay(vm, d, now, onExport = onExport, onImport = onImport)
+            if (vm.settingsOpen) SettingsOverlay(
+                vm = vm,
+                data = d,
+                now = now,
+                onExport = onExport,
+                onImport = onImport,
+                onCalendarExport = onCalendarExport,
+                onCalendarImport = onCalendarImport,
+            )
             if (vm.changelogOpen) com.bento.calendar.ui.settings.ChangelogOverlay(vm)
             if (vm.categoriesOpen) com.bento.calendar.ui.settings.CategoriesOverlay(vm, d)
             if (vm.trashOpen) com.bento.calendar.ui.settings.TrashOverlay(vm, d)

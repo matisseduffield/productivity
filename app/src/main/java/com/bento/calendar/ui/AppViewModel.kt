@@ -16,7 +16,10 @@ import com.bento.calendar.data.DeviceCal
 import com.bento.calendar.data.DeviceCalendars
 import com.bento.calendar.data.DeviceEvent
 import com.bento.calendar.data.EventItem
+import com.bento.calendar.data.IcsImportResult
 import com.bento.calendar.data.completeTask
+import com.bento.calendar.data.exportEventsToIcs
+import com.bento.calendar.data.importEventsFromIcs
 import com.bento.calendar.data.NoteItem
 import com.bento.calendar.data.Prefs
 import com.bento.calendar.data.Priority
@@ -1544,6 +1547,41 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun dismissUpdate() {
         updateDismissed = true
+    }
+
+    // ---- Calendar files (.ics) ----
+
+    /** Standards-based event export for Google Calendar, Outlook, etc. */
+    fun exportCalendarIcs(): String? = data.value?.let {
+        exportEventsToIcs(it.events, it.categories)
+    }
+
+    /**
+     * Merge a calendar file into the live event list. The decoder's stable
+     * UID-derived ids make repeat imports idempotent; unlike backup restore,
+     * this never replaces tasks, notes, preferences, categories, or trash.
+     */
+    suspend fun importCalendarIcs(text: String): IcsImportResult {
+        val snapshot = data.value ?: return IcsImportResult(
+            events = emptyList(), duplicates = 0, skipped = 0,
+            sourceEvents = 0, validCalendar = false,
+        )
+        // Calendar exports can be large; parsing, line unfolding and hashing
+        // stay off the UI thread. mut() below returns to the VM's Main scope.
+        val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            importEventsFromIcs(
+                text = text,
+                categories = snapshot.categories,
+                existingIds = snapshot.events.mapTo(mutableSetOf()) { it.id },
+            )
+        }
+        if (result.validCalendar && result.events.isNotEmpty()) {
+            mut { current ->
+                val ids = current.events.mapTo(mutableSetOf()) { it.id }
+                current.copy(events = current.events + result.events.filter { ids.add(it.id) })
+            }
+        }
+        return result
     }
 
     // ---- Backup: export / import ----

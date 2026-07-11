@@ -12,17 +12,25 @@ implementation map).
 - **Tasks** — Overdue / Today / Upcoming / Someday checklist with collapsible Completed
 - Universal search, dark/light theme, 4 accent colors, 24h/12h time, week-start setting
 - Real system reminders: exact alarms + notifications, reboot/clock-change/permission-change recovery
+- Calendar interoperability: merge or export standard `.ics` event files
+- Widgets, biometric app/note unlock, recurring tasks, custom categories, soft-delete trash
 - All data on-device (atomic JSON via DataStore, file `bento.calendar.v1.json`)
+
+The persisted schema and mutation invariants are documented in
+[`DATA_MODEL.md`](DATA_MODEL.md).
 
 ## Build
 Toolchain lives in `C:\Users\matisse\android-toolchain\` (JDK 17, Android SDK 35, Gradle 8.14.2):
 
 ```powershell
 $env:JAVA_HOME = "C:\Users\matisse\android-toolchain\jdk"
-& "C:\Users\matisse\android-toolchain\gradle\bin\gradle.bat" :app:assembleRelease :app:testReleaseUnitTest :app:lintRelease
+& "C:\Users\matisse\android-toolchain\gradle\bin\gradle.bat" --project-dir . `
+  :app:testGithubReleaseUnitTest :app:assembleGithubRelease `
+  :app:bundlePlayRelease :app:lintGithubRelease
 ```
 
-Output: `app\build\outputs\apk\release\app-release.apk`.
+Outputs: the self-updating APK under `app\build\outputs\apk\github\release\`
+and the Play bundle under `app\build\outputs\bundle\playRelease\`.
 
 Signing is never committed: local builds read the untracked
 `keystore.properties` + `bento-release.keystore` (backup at

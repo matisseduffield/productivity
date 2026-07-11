@@ -63,6 +63,8 @@ fun SettingsOverlay(
     now: LocalDateTime,
     onExport: () -> Unit = {},
     onImport: () -> Unit = {},
+    onCalendarExport: () -> Unit = {},
+    onCalendarImport: () -> Unit = {},
 ) {
     val c = LocalBento.current
     val prefs = data.prefs
@@ -373,6 +375,20 @@ fun SettingsOverlay(
                         },
                     ) {
                         TextLink("Open", onClick = { vm.openTrash() })
+                    }
+                    SettingsRow(
+                        icon = BentoIcons.SettingsCalendar,
+                        title = "Export calendar",
+                        sub = "Save your Bento events as an .ics file",
+                    ) {
+                        TextLink("Export", onClick = onCalendarExport)
+                    }
+                    SettingsRow(
+                        icon = BentoIcons.SettingsCalendar,
+                        title = "Import calendar",
+                        sub = "Add events from Google Calendar, Outlook or .ics",
+                    ) {
+                        TextLink("Import", onClick = onCalendarImport)
                     }
                     SettingsRow(
                         icon = BentoIcons.Download,

@@ -3,6 +3,7 @@ package com.bento.calendar
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
@@ -47,27 +48,7 @@ class MainActivity : FragmentActivity() {
             if (uri == null) return@registerForActivityResult
             val json = vm.exportJson() ?: return@registerForActivityResult
             lifecycleScope.launch {
-                val saved = withContext(Dispatchers.IO) {
-                    try {
-                        // "wt" truncates explicitly: plain "w" is not guaranteed to
-                        // truncate on all DocumentsProviders, so overwriting a longer
-                        // old backup could leave trailing garbage that corrupts it.
-                        val out = try {
-                            contentResolver.openOutputStream(uri, "wt")
-                        } catch (_: Exception) {
-                            // Some providers reject "wt"; fall back to plain "w".
-                            contentResolver.openOutputStream(uri)
-                        }
-                        if (out == null) {
-                            false
-                        } else {
-                            out.use { it.write(json.toByteArray(Charsets.UTF_8)) }
-                            true
-                        }
-                    } catch (_: Exception) {
-                        false
-                    }
-                }
+                val saved = writeUtf8(uri, json)
                 Toast.makeText(
                     this@MainActivity,
                     if (saved) "Backup saved" else "Couldn't save backup",
@@ -83,15 +64,7 @@ class MainActivity : FragmentActivity() {
             lifecycleScope.launch {
                 // The picker's MIME filter admits arbitrary files, so read on IO
                 // with a size cap; the store mutation and toast stay on Main.
-                val text = withContext(Dispatchers.IO) {
-                    try {
-                        contentResolver.openInputStream(uri)?.use { input ->
-                            input.readBounded(MAX_IMPORT_BYTES)
-                        }
-                    } catch (_: Exception) {
-                        null
-                    }
-                }
+                val text = readUtf8Bounded(uri, MAX_IMPORT_BYTES)
                 val restored = try {
                     text?.let { vm.importFromJson(it) } ?: false
                 } catch (_: Exception) {
@@ -105,6 +78,48 @@ class MainActivity : FragmentActivity() {
             }
         }
 
+    /** Settings > Data > Export calendar: interoperable RFC 5545 file. */
+    private val exportCalendarLauncher =
+        registerForActivityResult(ActivityResultContracts.CreateDocument("text/calendar")) { uri ->
+            if (uri == null) return@registerForActivityResult
+            val calendar = vm.exportCalendarIcs() ?: return@registerForActivityResult
+            lifecycleScope.launch {
+                val saved = writeUtf8(uri, calendar)
+                Toast.makeText(
+                    this@MainActivity,
+                    if (saved) "Calendar exported" else "Couldn't export calendar",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+
+    /** Settings > Data > Import calendar: merges VEVENTs; never replaces data. */
+    private val importCalendarLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri == null) return@registerForActivityResult
+            lifecycleScope.launch {
+                val text = readUtf8Bounded(uri, MAX_IMPORT_BYTES)
+                val result = try {
+                    if (text != null) vm.importCalendarIcs(text) else null
+                } catch (_: Exception) {
+                    null
+                }
+                val message = when {
+                    result == null || !result.validCalendar -> "Not a valid calendar file"
+                    result.events.isNotEmpty() -> buildString {
+                        append("Imported ${result.events.size} event")
+                        if (result.events.size != 1) append('s')
+                        if (result.duplicates > 0) append(" · ${result.duplicates} already there")
+                        if (result.skipped > 0) append(" · ${result.skipped} skipped")
+                    }
+                    result.duplicates > 0 && result.skipped == 0 -> "Those events are already imported"
+                    result.sourceEvents == 0 -> "No events in that calendar file"
+                    else -> "No compatible events found"
+                }
+                Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
+            }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -113,6 +128,8 @@ class MainActivity : FragmentActivity() {
                 vm,
                 onExport = { exportLauncher.launch("bento-backup.json") },
                 onImport = { importLauncher.launch(IMPORT_MIME_TYPES) },
+                onCalendarExport = { exportCalendarLauncher.launch("bento-calendar.ics") },
+                onCalendarImport = { importCalendarLauncher.launch(ICS_MIME_TYPES) },
             )
         }
         requestNotificationPermission()
@@ -236,6 +253,34 @@ class MainActivity : FragmentActivity() {
         vm.refreshNow()
     }
 
+    /** Write a UTF-8 document, explicitly truncating when the provider allows. */
+    private suspend fun writeUtf8(uri: Uri, text: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            // Plain "w" is not guaranteed to truncate on every provider; a
+            // shorter replacement could otherwise retain corrupt tail bytes.
+            val out = try {
+                contentResolver.openOutputStream(uri, "wt")
+            } catch (_: Exception) {
+                contentResolver.openOutputStream(uri)
+            }
+            if (out == null) false
+            else {
+                out.use { it.write(text.toByteArray(Charsets.UTF_8)) }
+                true
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private suspend fun readUtf8Bounded(uri: Uri, max: Int): String? = withContext(Dispatchers.IO) {
+        try {
+            contentResolver.openInputStream(uri)?.use { it.readBounded(max) }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun requestNotificationPermission() {
         if (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
@@ -271,6 +316,7 @@ class MainActivity : FragmentActivity() {
 
         // Some file managers serve .json as text or octet-stream MIME types.
         val IMPORT_MIME_TYPES = arrayOf("application/json", "text/*", "application/octet-stream")
+        val ICS_MIME_TYPES = arrayOf("text/calendar", "text/*", "application/octet-stream")
 
         /** Bound on imported backup size; anything larger is not our backup. */
         const val MAX_IMPORT_BYTES = 10 * 1024 * 1024

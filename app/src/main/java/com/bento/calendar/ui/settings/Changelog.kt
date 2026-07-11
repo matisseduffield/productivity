@@ -41,6 +41,14 @@ data class ChangelogEntry(val version: String, val date: String, val changes: Li
 
 val CHANGELOG = listOf(
     ChangelogEntry(
+        "2.5.0", "July 2026",
+        listOf(
+            "Calendar files: export your Bento events as .ics for Google Calendar, Outlook and more",
+            "Import .ics calendars without replacing anything — repeat imports automatically skip duplicates",
+            "Recurrence exceptions, all-day and multi-day events, locations, categories and reminders survive a Bento calendar round-trip",
+        ),
+    ),
+    ChangelogEntry(
         "2.4.0", "July 2026",
         listOf(
             "Trash: deleted events, tasks and notes stay restorable for 30 days (Settings → Data)",
