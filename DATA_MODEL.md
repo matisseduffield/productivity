@@ -1,10 +1,10 @@
 # Bento Calendar data model
 
-Bento stores its private data as one atomic, typed document using Android
-DataStore. The on-device file is `bento.calendar.v1.json`; the name stays
-stable so releases upgrade the same store. Kotlin serialization supplies
-defaults for new fields and ignores unknown fields, making app upgrades and
-backup downgrades tolerant without a manual SQL migration layer.
+Bento stores domain records in an on-device Room database and preferences/PIN
+metadata in DataStore. On the first v3 launch, the existing
+`bento.calendar.v1.json` document is imported into Room in one transaction and
+left untouched unless that import succeeds. Kotlin serialization still defines
+the backup format and supplies safe defaults for old exports.
 
 ## Root document
 
@@ -18,6 +18,10 @@ backup downgrades tolerant without a manual SQL migration layer.
 - `categories`: user-editable category ids, labels and colours.
 - `trash`: restorable event/task/note snapshots, capped at 200 entries and
   retained for 30 days.
+- `taskBlocks`: independent scheduled work sessions; one task can own several.
+- `dayPlans`: finalized daily working-hour snapshots and review state.
+- `focusSessions`: detailed planned-versus-actual work history for 12 months.
+- `focusDailyTotals`: compacted older history grouped by date/category.
 
 The device-calendar overlay is deliberately not stored here: only the user's
 enabled calendar ids are persisted. Device events remain read-only and are
@@ -47,6 +51,20 @@ or `agenda`) so the user's working view survives a process restart.
 - Checklist step ids are stable inside the task.
 - Completing a recurring task advances its due date and resets its checklist
   instead of marking it permanently complete.
+- `estimateMin` is remaining expected effort; null uses the visible planner
+  default rather than silently inventing persisted data.
+- `TaskBlock` never changes the task deadline. Blocks use 15-minute increments,
+  cannot cross midnight and carry a recurring-cycle key when applicable.
+- Suggested blocks remain transient until the user confirms the plan.
+
+## Focus invariants
+
+- At most one focus session is active or paused.
+- Timer transitions are persisted, but elapsed seconds are derived from the
+  running anchor; there are no per-second database or widget writes.
+- Expiry never completes a task automatically. Reboot marks a running session
+  interrupted because its monotonic interval cannot be reconstructed safely.
+- Detailed sessions older than 365 days compact into daily category totals.
 
 ## Notes and privacy
 
@@ -57,12 +75,13 @@ content (including locked notes), which Settings states explicitly.
 
 ## Mutation pipeline
 
-All writes go through `AppRepository.update`, which uses DataStore's serialized
-`updateData` transaction. `AppViewModel.mut` then compares the resulting data
-with its prior projections:
+Compatibility writes go through `AppRepository.update`, guarded by a process
+mutex and a Room transaction; focused planner repositories can query indexed
+rows directly. `AppViewModel.mut` then compares the resulting snapshot with its
+prior projections:
 
-1. Event/task changes reschedule the single alarm chain.
-2. Event/task or widget-visible preference changes refresh Glance widgets.
+1. Event/task/block changes reschedule the single reminder chain.
+2. Event/task/block or widget-visible preference changes refresh Glance widgets.
 3. Note-editor keystrokes and unrelated preference writes avoid those costly
    side effects.
 

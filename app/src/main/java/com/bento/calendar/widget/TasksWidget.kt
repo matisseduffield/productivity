@@ -40,7 +40,7 @@ import androidx.glance.unit.ColorProvider
 import com.bento.calendar.data.AppGraph
 import com.bento.calendar.data.Priority
 import com.bento.calendar.data.TaskItem
-import com.bento.calendar.data.completeTask
+import com.bento.calendar.data.completeTaskWithBlocks
 import com.bento.calendar.data.toIso
 import com.bento.calendar.reminders.ReminderScheduler
 import com.bento.calendar.ui.Fmt
@@ -110,7 +110,7 @@ class ToggleTaskAction : ActionCallback {
         val taskId = parameters[TASK_ID] ?: return
         runCatching {
             val updated = AppGraph.repository(context).update { x ->
-                completeTask(x, taskId, LocalDate.now())
+                completeTaskWithBlocks(x, taskId, LocalDate.now())
             }
             // Task reminders live on the same alarm chain — completing (or
             // advancing) a task from the widget must re-arm it, not leave a

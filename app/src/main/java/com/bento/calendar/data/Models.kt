@@ -21,6 +21,14 @@ data class AppData(
     val categories: List<Category> = Cats.DEFAULTS,
     /** Soft-deleted items, newest first; see [TrashEntry]. */
     val trash: List<TrashEntry> = emptyList(),
+    /** Planned work sessions. Deadlines remain on [TaskItem.due]. */
+    val taskBlocks: List<TaskBlock> = emptyList(),
+    /** One finalized/reviewed planning record per local date. */
+    val dayPlans: List<DayPlan> = emptyList(),
+    /** Actual focused work; retained independently from task deletion. */
+    val focusSessions: List<FocusSession> = emptyList(),
+    /** Compacted focus history older than one year, grouped by day/category. */
+    val focusDailyTotals: List<FocusDailyTotal> = emptyList(),
 ) {
     /** Category lookup with a stable fallback (first category) so orphaned
      *  ids from deleted categories never crash rendering. */
@@ -88,6 +96,8 @@ data class TaskItem(
      * Repeating tasks keep it as the due date advances.
      */
     val remindAt: String? = null,
+    /** Remaining expected effort; null means the planner uses its visible default. */
+    val estimateMin: Int? = null,
 )
 
 @Serializable
@@ -139,6 +149,8 @@ data class TrashEntry(
     val event: EventItem? = null,
     val task: TaskItem? = null,
     val note: NoteItem? = null,
+    /** Unfinished/future schedule restored with a deleted task. */
+    val taskBlocks: List<TaskBlock> = emptyList(),
 ) {
     val title: String
         get() = event?.title ?: task?.title ?: note?.title?.ifEmpty { "Untitled" } ?: ""
@@ -175,7 +187,97 @@ data class Prefs(
     val tasksOnCalendar: Boolean = true,
     /** Last Calendar mode, restored on the next launch. */
     val lastCalView: String = "month",
+    /** Local auto-plan boundaries. No breaks or buffers are imposed. */
+    val workHours: List<WorkHours> = WorkHours.defaults(),
+    val defaultTaskEstimateMin: Int = 30,
+    /** Minutes before an internal task block starts; null disables it. */
+    val blockReminderMin: Int? = 0,
 )
+
+@Serializable
+data class WorkHours(
+    /** java.time.DayOfWeek value: Monday=1 through Sunday=7. */
+    val day: Int,
+    val enabled: Boolean,
+    val start: String = "09:00",
+    val end: String = "17:00",
+) {
+    companion object {
+        fun defaults(): List<WorkHours> = (1..7).map { day ->
+            WorkHours(day = day, enabled = day <= 5)
+        }
+    }
+}
+
+@Serializable
+data class TaskBlock(
+    val id: String,
+    val taskId: String,
+    /** Recurring-task cycle key, normally the due date at scheduling time. */
+    val occurrenceKey: String? = null,
+    val date: String,
+    val startMin: Int,
+    val durationMin: Int,
+    val source: String = BlockSource.MANUAL,
+    val state: String = BlockState.PLANNED,
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = createdAt,
+)
+
+object BlockSource {
+    const val MANUAL = "manual"
+    const val SUGGESTED = "suggested"
+    val ALL = setOf(MANUAL, SUGGESTED)
+}
+
+object BlockState {
+    const val PLANNED = "planned"
+    const val COMPLETED = "completed"
+    const val SKIPPED = "skipped"
+    val ALL = setOf(PLANNED, COMPLETED, SKIPPED)
+}
+
+@Serializable
+data class DayPlan(
+    val date: String,
+    val workStartMin: Int,
+    val workEndMin: Int,
+    val plannedAt: Long,
+    val reviewedAt: Long? = null,
+)
+
+@Serializable
+data class FocusSession(
+    val id: String,
+    val taskId: String? = null,
+    val blockId: String? = null,
+    val taskTitleSnapshot: String,
+    val categoryIdSnapshot: String = "",
+    val startedAt: Long,
+    val endedAt: Long? = null,
+    val activeSeconds: Long = 0,
+    /** Wall-clock anchor for the currently running interval; null while paused. */
+    val runningSince: Long? = startedAt,
+    /** Monotonic anchor used while the device remains on; reboot interrupts. */
+    val runningSinceElapsed: Long? = null,
+    val targetSeconds: Long = 30 * 60L,
+    val outcome: String = FocusOutcome.ACTIVE,
+)
+
+@Serializable
+data class FocusDailyTotal(
+    val date: String,
+    val categoryId: String = "",
+    val activeSeconds: Long,
+)
+
+object FocusOutcome {
+    const val ACTIVE = "active"
+    const val PAUSED = "paused"
+    const val FINISHED = "finished"
+    const val INTERRUPTED = "interrupted"
+    val ALL = setOf(ACTIVE, PAUSED, FINISHED, INTERRUPTED)
+}
 
 object Recur {
     const val NONE = "none"

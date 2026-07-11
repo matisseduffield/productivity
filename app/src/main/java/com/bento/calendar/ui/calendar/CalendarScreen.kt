@@ -11,6 +11,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -33,6 +34,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.Icon
@@ -79,9 +81,12 @@ import com.bento.calendar.data.EventItem
 import com.bento.calendar.data.Priority
 import com.bento.calendar.data.Recur
 import com.bento.calendar.data.TaskItem
+import com.bento.calendar.data.TaskBlock
+import com.bento.calendar.data.BlockState
 import com.bento.calendar.data.minsToHm
 import com.bento.calendar.data.occurrencesOn
 import com.bento.calendar.data.toIso
+import com.bento.calendar.data.toDate
 import com.bento.calendar.data.toMins
 import com.bento.calendar.ui.AppViewModel
 import com.bento.calendar.ui.CalView
@@ -399,6 +404,7 @@ private data class GridBlock(
     val device: DeviceEvent?,
     val startMin: Int,
     val endMin: Int,
+    val task: TaskBlock? = null,
 )
 
 /**
@@ -1033,7 +1039,7 @@ private fun WeekView(
     // start+22 min (14dp block + 2dp gap at 44dp/hour) so blocks that will
     // RENDER overlapping are laid out side by side; clusters wider than two
     // columns fold the rest into a per-cluster "+N" pill (Day view shows all).
-    val perDay = remember(data.events, weekStart, vm.deviceEvents) {
+    val perDay = remember(data.events, data.taskBlocks, weekStart, vm.deviceEvents) {
         (0..6).map { i ->
             val date = ws.plusDays(i.toLong())
             // All-day events would render as full-day columns in the timed
@@ -1054,6 +1060,12 @@ private fun WeekView(
                 // en <= s also drops multi-day fan-out days whose HH:MM range
                 // wraps midnight — they'd otherwise draw phantom blocks.
                 if (en <= s || en <= 420 || s >= 1320) null else GridBlock(null, e, s, en)
+            } + data.taskBlocks.filter {
+                it.date == date.toIso() && it.state == BlockState.PLANNED
+            }.mapNotNull { block ->
+                val s = maxOf(block.startMin, 420)
+                val en = minOf(block.startMin + block.durationMin, 1320)
+                if (en <= s || en <= 420 || s >= 1320) null else GridBlock(null, null, s, en, block)
             }
             val effEnd = { t: GridBlock -> maxOf(t.endMin, t.startMin + 22) }
             val positioned = layoutOverlaps(visible, startOf = { it.startMin }, endOf = effEnd)
@@ -1212,7 +1224,7 @@ private fun WeekView(
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
-                    } else {
+                    } else if (p.item.device != null) {
                         // Read-only device block: tinted fill + solid leading
                         // rail, c.tx text; tap shows the details sheet.
                         val dev = p.item.device!!
@@ -1241,6 +1253,30 @@ private fun WeekView(
                                         horizontal = if (slice < 20.dp) 1.dp else 4.dp,
                                         vertical = 3.dp,
                                     ),
+                            )
+                        }
+                    } else {
+                        val block = p.item.task!!
+                        val task = data.tasks.firstOrNull { it.id == block.taskId }
+                        Box(
+                            Modifier
+                                .offset(x = blockX, y = y.dp)
+                                .width(blockW)
+                                .height(h.dp)
+                                .clip(RoundedCornerShape(7.dp))
+                                .background(c.accTint(0.18f).compositeOver(c.tile))
+                                .border(1.dp, c.accTint(0.55f), RoundedCornerShape(7.dp))
+                                .tap { if (task != null) vm.openTask(task, switchTab = false) }
+                                .padding(horizontal = if (slice < 20.dp) 2.dp else 5.dp, vertical = 3.dp),
+                        ) {
+                            Text(
+                                task?.title ?: "Task",
+                                fontSize = 8.5.sp,
+                                fontWeight = FontWeight.W700,
+                                color = c.tx,
+                                lineHeight = 1.25.em,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
                             )
                         }
                     }
@@ -1304,7 +1340,7 @@ private fun DayView(
     // effective end of start+36 min (30dp block + 3dp gap at 56dp/hour) so
     // blocks that will RENDER overlapping are laid out side by side. Read-only
     // device events join the same overlap layout so they share columns.
-    val (allDayEvents, allDayDevice, positioned) = remember(data.events, selDate, vm.deviceEvents) {
+    val (allDayEvents, allDayDevice, positioned) = remember(data.events, data.taskBlocks, selDate, vm.deviceEvents) {
         val occ = occurrencesOn(data.events, selDate)
         val dev = vm.deviceEvents[selDate.toIso()].orEmpty()
         val visible = occ.filter { !it.allDay }.mapNotNull { e ->
@@ -1319,6 +1355,13 @@ private fun DayView(
             // wraps midnight — they'd otherwise draw phantom blocks.
             if (en <= s || e.end.toMins() <= 360 || e.start.toMins() >= 1380) null
             else GridBlock(null, e, s, en)
+        } + data.taskBlocks.filter {
+            it.date == selDate.toIso() && it.state == BlockState.PLANNED
+        }.mapNotNull { block ->
+            val s = maxOf(block.startMin, 360)
+            val en = minOf(block.startMin + block.durationMin, 1380)
+            if (en <= s || block.startMin + block.durationMin <= 360 || block.startMin >= 1380) null
+            else GridBlock(null, null, s, en, block)
         }
         Triple(
             occ.filter { it.allDay },
@@ -1427,6 +1470,63 @@ private fun DayView(
         }
     }
 
+    // Unscheduled tray: the mobile-friendly counterpart to desktop drag from
+    // a sidebar. One tap places the task in the first free visible slot; the
+    // resulting block can then be long-pressed and resized in the grid.
+    val unscheduled = remember(data.tasks, data.taskBlocks, selDate) {
+        val scheduledIds = data.taskBlocks
+            .filter { it.date == selDate.toIso() && it.state == BlockState.PLANNED }
+            .mapTo(mutableSetOf()) { it.taskId }
+        data.tasks.filter { !it.done && it.id !in scheduledIds }
+            .sortedByDescending { it.priority }
+    }
+    if (unscheduled.isNotEmpty()) {
+        Column(Modifier.fillMaxWidth().padding(top = 9.dp)) {
+            Text(
+                "UNSCHEDULED",
+                fontSize = 9.sp,
+                fontWeight = FontWeight.W700,
+                letterSpacing = 0.12.em,
+                color = c.faint,
+            )
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(top = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                unscheduled.take(12).forEach { task ->
+                    val duration = task.estimateMin ?: data.prefs.defaultTaskEstimateMin
+                    Box(
+                        Modifier
+                            .tap {
+                                val occupied = positioned.map { it.item.startMin to it.item.endMin }.sortedBy { it.first }
+                                var start = if (selDate == today) {
+                                    (((maxOf(nowMin, 360) + 14) / 15) * 15).coerceAtMost(1365)
+                                } else 540
+                                for ((busyStart, busyEnd) in occupied) {
+                                    if (start + duration <= busyStart) break
+                                    if (start < busyEnd && start + duration > busyStart) {
+                                        start = ((busyEnd + 14) / 15) * 15
+                                    }
+                                }
+                                vm.scheduleTaskBlock(task.id, selDate, start.coerceAtMost(1380 - duration.coerceAtMost(1020)), duration)
+                            }
+                            .background(c.accTint(0.12f), RoundedCornerShape(11.dp))
+                            .border(1.dp, c.accTint(0.35f), RoundedCornerShape(11.dp))
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                    ) {
+                        Text(
+                            "${task.title} · ${duration}m",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.W600,
+                            color = c.tx,
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     // Grid: 44dp gutter + 06:00-23:00 column (17h x 56dp = 952dp).
     Row(Modifier.fillMaxWidth().padding(top = 8.dp)) {
         Column(Modifier.width(44.dp)) {
@@ -1481,7 +1581,7 @@ private fun DayView(
                         h = h,
                         use24h = use24h,
                     )
-                } else {
+                } else if (p.item.device != null) {
                     val dev = p.item.device!!
                     DayDeviceBlock(
                         e = dev,
@@ -1492,11 +1592,131 @@ private fun DayView(
                         use24h = use24h,
                         onTap = { onDeviceTap(dev) },
                     )
+                } else {
+                    val block = p.item.task!!
+                    val task = data.tasks.firstOrNull { it.id == block.taskId }
+                    DayTaskBlock(
+                        vm = vm,
+                        block = block,
+                        task = task,
+                        x = x,
+                        y = y,
+                        w = w,
+                        h = h,
+                        use24h = use24h,
+                    )
                 }
             }
             if (selDate == today && nowMin in 360..1380) {
                 NowLine(((nowMin - 360) / 60f * 56f).dp)
             }
+        }
+    }
+}
+
+/** Internal task session: long-press-drag moves it; drag the bottom grip to resize. */
+@Composable
+private fun DayTaskBlock(
+    vm: AppViewModel,
+    block: TaskBlock,
+    task: TaskItem?,
+    x: Dp,
+    y: Float,
+    w: Dp,
+    h: Float,
+    use24h: Boolean,
+) {
+    val c = LocalBento.current
+    val density = LocalDensity.current
+    val haptic = LocalHapticFeedback.current
+    var dragPx by remember(block.id) { mutableFloatStateOf(0f) }
+    var resizePx by remember(block.id) { mutableFloatStateOf(0f) }
+    var dragging by remember(block.id) { mutableStateOf(false) }
+    val dragSteps = (dragPx / density.density / 14f).roundToInt()
+    val targetStart = (block.startMin + dragSteps * 15)
+        .coerceIn(360, (1380 - block.durationMin).coerceAtLeast(360))
+    val resizeSteps = (resizePx / density.density / 14f).roundToInt()
+    val targetDuration = (block.durationMin + resizeSteps * 15)
+        .coerceIn(15, 1380 - block.startMin)
+    val visualY = (targetStart - 360) / 60f * 56f
+    val visualH = maxOf(targetDuration / 60f * 56f - 3f, 30f)
+
+    Column(
+        Modifier
+            .offset {
+                IntOffset(x.roundToPx(), (if (dragging) visualY else y).dp.roundToPx())
+            }
+            .zIndex(if (dragging || resizePx != 0f) 1.2f else 0f)
+            .width(w)
+            .height(if (resizePx != 0f) visualH.dp else h.dp)
+            .clip(RoundedCornerShape(11.dp))
+            .background(c.accTint(0.18f).compositeOver(c.tile))
+            .border(1.dp, c.accTint(0.6f), RoundedCornerShape(11.dp))
+            .tap { if (task != null) vm.openTask(task, switchTab = false) }
+            .pointerInput(block.id) {
+                detectDragGesturesAfterLongPress(
+                    onDragStart = {
+                        dragging = true
+                        dragPx = 0f
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    },
+                    onDrag = { change, amount ->
+                        change.consume()
+                        dragPx += amount.y
+                    },
+                    onDragEnd = {
+                        dragging = false
+                        if (targetStart != block.startMin) vm.moveTaskBlock(block.id, block.date.toDate(), targetStart)
+                        dragPx = 0f
+                    },
+                    onDragCancel = {
+                        dragging = false
+                        dragPx = 0f
+                    },
+                )
+            }
+            .padding(start = 9.dp, end = 8.dp, top = 7.dp, bottom = 8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(BentoIcons.Check, null, tint = c.acc, modifier = Modifier.size(11.dp))
+            Text(
+                task?.title ?: "Task",
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.W700,
+                color = c.tx,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 6.dp).weight(1f),
+            )
+        }
+        Text(
+            "${Fmt.time(minsToHm(if (dragging) targetStart else block.startMin), use24h)} · " +
+                "${if (resizePx != 0f) targetDuration else block.durationMin} min",
+            fontSize = 9.5.sp,
+            color = c.sub,
+            modifier = Modifier.padding(top = 3.dp),
+        )
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(10.dp)
+                .pointerInput(block.id) {
+                    detectVerticalDragGestures(
+                        onDragStart = { resizePx = 0f },
+                        onVerticalDrag = { change, amount ->
+                            change.consume()
+                            resizePx += amount
+                        },
+                        onDragEnd = {
+                            if (targetDuration != block.durationMin) vm.resizeTaskBlock(block.id, targetDuration)
+                            resizePx = 0f
+                        },
+                        onDragCancel = { resizePx = 0f },
+                    )
+                },
+            contentAlignment = Alignment.BottomCenter,
+        ) {
+            Box(Modifier.width(20.dp).height(2.dp).background(c.accTint(0.7f), RoundedCornerShape(1.dp)))
         }
     }
 }

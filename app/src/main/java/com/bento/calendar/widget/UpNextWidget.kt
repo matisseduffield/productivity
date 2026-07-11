@@ -34,6 +34,8 @@ import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
 import com.bento.calendar.data.AppGraph
 import com.bento.calendar.data.EventItem
+import com.bento.calendar.data.BlockState
+import com.bento.calendar.data.minsToHm
 import com.bento.calendar.data.occurrencesOn
 import com.bento.calendar.data.toMins
 import com.bento.calendar.ui.Fmt
@@ -69,17 +71,29 @@ class UpNextWidget : GlanceAppWidget() {
             val data by repo.data.collectAsState(initial)
             val today = LocalDate.now()
             val nowMin = LocalTime.now().let { it.hour * 60 + it.minute }
-            val occ = (
+            val eventItems = (
                 occurrencesOn(data.events, today).map { it to catColor(data, it.cat) } +
                     if (today == deviceDay) deviceRows else emptyList()
-                ).sortedBy { it.first.start }
-            val nextPair = occ.firstOrNull { !it.first.allDay && it.first.end.toMins() > nowMin }
-                ?: occ.firstOrNull { it.first.allDay }
+                ).map { (event, color) ->
+                    UpNextItem(event.title, event.start, event.end, event.allDay, event.loc, color, event.endDate != null)
+                }
+            val taskItems = data.taskBlocks
+                .filter { it.date == today.toString() && it.state == BlockState.PLANNED }
+                .mapNotNull { block ->
+                    val task = data.tasks.firstOrNull { it.id == block.taskId && !it.done } ?: return@mapNotNull null
+                    UpNextItem(
+                        task.title, minsToHm(block.startMin), minsToHm(block.startMin + block.durationMin),
+                        false, "Focused task", accentOf(data), false,
+                    )
+                }
+            val occ = (eventItems + taskItems).sortedBy { it.start }
+            val nextPair = occ.firstOrNull { !it.allDay && it.end.toMins() > nowMin }
+                ?: occ.firstOrNull { it.allDay }
             UpNextBody(
                 context = context,
-                next = nextPair?.first,
+                next = nextPair,
                 // Dot only renders when next != null; Transparent is inert.
-                dotColor = nextPair?.second ?: Color.Transparent,
+                dotColor = nextPair?.color ?: Color.Transparent,
                 nowMin = nowMin,
                 use24h = data.prefs.use24h,
                 c = paletteOf(data),
@@ -89,10 +103,20 @@ class UpNextWidget : GlanceAppWidget() {
     }
 }
 
+private data class UpNextItem(
+    val title: String,
+    val start: String,
+    val end: String,
+    val allDay: Boolean,
+    val loc: String,
+    val color: Color,
+    val spanSegment: Boolean,
+)
+
 @Composable
 private fun UpNextBody(
     context: Context,
-    next: EventItem?,
+    next: UpNextItem?,
     dotColor: Color,
     nowMin: Int,
     use24h: Boolean,
@@ -149,7 +173,7 @@ private fun UpNextBody(
             Spacer(GlanceModifier.height(2.dp))
             // Span segments: show the real edge with an arrow instead of the
             // 00:00/23:59 sentinels (same language as the in-app agenda).
-            val spanSeg = next.endDate != null && !next.allDay
+            val spanSeg = next.spanSegment && !next.allDay
             Text(
                 when {
                     next.allDay -> "All day"

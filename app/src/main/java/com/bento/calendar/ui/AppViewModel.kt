@@ -1,6 +1,7 @@
 ﻿package com.bento.calendar.ui
 
 import android.app.Application
+import android.os.SystemClock
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -10,31 +11,45 @@ import androidx.lifecycle.viewModelScope
 import com.bento.calendar.data.Accents
 import com.bento.calendar.data.AppData
 import com.bento.calendar.data.AppGraph
+import com.bento.calendar.data.BlockSource
+import com.bento.calendar.data.BlockState
+import com.bento.calendar.data.BusyInterval
 import com.bento.calendar.data.Category
 import com.bento.calendar.data.Cats
 import com.bento.calendar.data.DeviceCal
 import com.bento.calendar.data.DeviceCalendars
 import com.bento.calendar.data.DeviceEvent
 import com.bento.calendar.data.EventItem
+import com.bento.calendar.data.FocusSession
+import com.bento.calendar.data.activeFocus
+import com.bento.calendar.data.focusElapsedSeconds
+import com.bento.calendar.data.compactFocusHistory
 import com.bento.calendar.data.IcsImportResult
-import com.bento.calendar.data.completeTask
+import com.bento.calendar.data.completeTaskWithBlocks
 import com.bento.calendar.data.exportEventsToIcs
 import com.bento.calendar.data.importEventsFromIcs
 import com.bento.calendar.data.NoteItem
 import com.bento.calendar.data.Prefs
 import com.bento.calendar.data.Priority
+import com.bento.calendar.data.PlanResult
 import com.bento.calendar.data.Recur
 import com.bento.calendar.data.SubTask
 import com.bento.calendar.data.TaskItem
+import com.bento.calendar.data.TaskBlock
+import com.bento.calendar.data.DayPlan
 import com.bento.calendar.data.Trash
 import com.bento.calendar.data.TrashEntry
 import com.bento.calendar.data.parseQuickAdd
+import com.bento.calendar.data.occurrencesOn
+import com.bento.calendar.data.planningCandidates
+import com.bento.calendar.data.suggestDayPlan
 import com.bento.calendar.data.minsToHm
 import com.bento.calendar.data.newId
 import com.bento.calendar.data.toDate
 import com.bento.calendar.data.toIso
 import com.bento.calendar.data.toMins
 import com.bento.calendar.reminders.ReminderScheduler
+import com.bento.calendar.focus.FocusTimer
 import com.bento.calendar.updates.UpdateManager
 import com.bento.calendar.widget.WidgetSync
 import kotlinx.coroutines.Job
@@ -98,6 +113,7 @@ data class TaskDraft(
     val subs: List<SubTask> = emptyList(),
     /** Reminder time ("HH:MM") on the due date; needs [due] to be set. */
     val remindAt: String? = null,
+    val estimateMin: Int? = null,
 )
 
 enum class PinMode { Set, Enter }
@@ -174,6 +190,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var armed by mutableStateOf(setOf<String>())
         private set
+    var planningOpen by mutableStateOf(false)
+        private set
+    var planningDate by mutableStateOf(LocalDate.now())
+        private set
+    var planningTaskIds by mutableStateOf(setOf<String>())
+        private set
+    var planningResult by mutableStateOf<PlanResult?>(null)
+        private set
 
     private val armJobs = mutableMapOf<String, Job>()
     private var pinErrJob: Job? = null
@@ -194,14 +218,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             ReminderScheduler.reschedule(getApplication(), d)
             lastScheduledEvents = d.events
             lastScheduledTasks = d.tasks
+            lastScheduledTaskBlocks = d.taskBlocks
+            lastBlockReminder = d.prefs.blockReminderMin
             // Seed the widget gate too: the widget already reflects the store
             // at launch, so the first mutation only pushes if it changed
             // something widget-relevant.
             lastPushedWidget = widgetSnapshot(d)
+            lastFocusSessions = d.focusSessions
+            FocusTimer.sync(getApplication(), d)
             // Trash retention: purge entries past the window once per launch.
             val cutoff = System.currentTimeMillis() - Trash.RETENTION_DAYS * 86_400_000L
             if (d.trash.any { it.deletedAt < cutoff }) {
                 mut { x -> x.copy(trash = x.trash.filter { it.deletedAt >= cutoff }) }
+            }
+            if (compactFocusHistory(d, today()) != d) {
+                mut { x -> compactFocusHistory(x, today()) }
             }
         }
         // NOTE: the automatic update check is kicked off from MainActivity, not
@@ -214,6 +245,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Tasks snapshot ditto — task reminders arm the same chain. */
     private var lastScheduledTasks: List<TaskItem>? = null
+    private var lastScheduledTaskBlocks: List<TaskBlock>? = null
+    private var lastBlockReminder: Int? = null
+    private var lastFocusSessions: List<FocusSession>? = null
 
     /**
      * The projection of the store the widget actually renders. [mut] only
@@ -225,6 +259,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // Full list, not a count: the Tasks widget renders titles, priorities
         // and checklist progress, so any task change must push.
         val tasks: List<TaskItem>,
+        val taskBlocks: List<TaskBlock>,
         val use24h: Boolean,
         val theme: String,
         val accent: String,
@@ -236,6 +271,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun widgetSnapshot(d: AppData) = WidgetSnapshot(
         events = d.events,
         tasks = d.tasks,
+        taskBlocks = d.taskBlocks,
         use24h = d.prefs.use24h,
         theme = d.prefs.theme,
         accent = d.prefs.accent,
@@ -258,10 +294,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // Alarms depend on events and tasks (task reminders); note/pref
             // edits (e.g. every editor keystroke) must not trigger a 60-day
             // alarm rescan.
-            if (d.events != lastScheduledEvents || d.tasks != lastScheduledTasks) {
+            if (
+                d.events != lastScheduledEvents || d.tasks != lastScheduledTasks ||
+                d.taskBlocks != lastScheduledTaskBlocks || d.prefs.blockReminderMin != lastBlockReminder
+            ) {
                 ReminderScheduler.reschedule(getApplication(), d)
                 lastScheduledEvents = d.events
                 lastScheduledTasks = d.tasks
+                lastScheduledTaskBlocks = d.taskBlocks
+                lastBlockReminder = d.prefs.blockReminderMin
             }
             // Same idea for the widget: it only shows events, tasks and a
             // few prefs, so gate the push on that projection.
@@ -269,6 +310,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (snap != lastPushedWidget) {
                 WidgetSync.push(getApplication())
                 lastPushedWidget = snap
+            }
+            if (d.focusSessions != lastFocusSessions) {
+                FocusTimer.sync(getApplication(), d)
+                lastFocusSessions = d.focusSessions
             }
         }
     }
@@ -321,6 +366,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         evDraft = null
         tkDraft = null
         pinCtx = null
+        planningOpen = false
+        planningResult = null
         disarm(Arm.EVENT)
         disarm(Arm.TASK)
     }
@@ -344,6 +391,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             categoriesOpen -> categoriesOpen = false
             changelogOpen -> changelogOpen = false
             settingsOpen -> settingsOpen = false
+            planningOpen -> closePlanner()
         }
     }
 
@@ -667,7 +715,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // ---- Tasks ----
     /** Plain tasks toggle done; repeating tasks advance to the next due date. */
     fun toggleTask(id: String) {
-        mut { completeTask(it, id, today()) }
+        mut { completeTaskWithBlocks(it, id, today()) }
     }
 
     /**
@@ -676,7 +724,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * where dismissing the editor should land back on the calendar.
      */
     fun openTask(t: TaskItem, switchTab: Boolean = true) {
-        tkDraft = TaskDraft(t.id, t.title, t.due?.toDate(), t.cat, t.recur, t.priority, t.subs, t.remindAt)
+        tkDraft = TaskDraft(
+            t.id, t.title, t.due?.toDate(), t.cat, t.recur, t.priority,
+            t.subs, t.remindAt, t.estimateMin,
+        )
         disarm(Arm.TASK)
         searchOpen = false
         fabOpen = false
@@ -695,7 +746,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val d = tkDraft
         if (d != null && (
                 d.id != null || d.title.isNotBlank() || d.due != null ||
-                    d.cat.isNotBlank() || d.priority != Priority.NONE || d.subs.isNotEmpty()
+                    d.cat.isNotBlank() || d.priority != Priority.NONE || d.subs.isNotEmpty() ||
+                    d.estimateMin != null
                 )
         ) {
             return
@@ -722,6 +774,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 subs = d.subs.map { it.copy(title = it.title.trim()) }.filter { it.title.isNotEmpty() },
                 // A reminder is a time on the due date — meaningless without one.
                 remindAt = if (d.due != null) d.remindAt else null,
+                estimateMin = d.estimateMin?.coerceIn(15, 24 * 60),
             )
             if (i >= 0) {
                 x.copy(tasks = x.tasks.toMutableList().apply { set(i, rec) })
@@ -737,8 +790,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         twoTap(Arm.TASK) {
             mut { x ->
                 val victim = x.tasks.firstOrNull { it.id == id }
-                val next = x.copy(tasks = x.tasks.filter { it.id != id })
-                if (victim != null) next.withTrashed(trashEntry(t = victim)) else next
+                val blocks = x.taskBlocks.filter { it.taskId == id && it.state == BlockState.PLANNED }
+                val next = x.copy(
+                    tasks = x.tasks.filter { it.id != id },
+                    taskBlocks = x.taskBlocks.filterNot { it.taskId == id && it.state == BlockState.PLANNED },
+                )
+                if (victim != null) next.withTrashed(trashEntry(t = victim, blocks = blocks)) else next
             }
             tkDraft = null
         }
@@ -753,6 +810,206 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     if (s.id == subId) s.copy(done = !s.done) else s
                 })
             })
+        }
+    }
+
+    // ---- Daily planning & internal task blocks ----
+
+    fun openPlanner(date: LocalDate = today()) {
+        val d = data.value ?: return
+        planningDate = date
+        val unfinished = d.taskBlocks
+            .filter { it.date < date.toIso() && it.state == BlockState.PLANNED }
+            .mapTo(mutableSetOf()) { it.taskId }
+        planningTaskIds = planningCandidates(d.tasks, date, unfinished).mapTo(linkedSetOf()) { it.id }
+        planningOpen = true
+        rebuildPlanPreview()
+    }
+
+    fun closePlanner() {
+        planningOpen = false
+        planningResult = null
+    }
+
+    fun togglePlanningTask(id: String) {
+        planningTaskIds = if (id in planningTaskIds) planningTaskIds - id else planningTaskIds + id
+        rebuildPlanPreview()
+    }
+
+    fun rebuildPlanPreview() {
+        val d = data.value ?: return
+        val date = planningDate
+        val tasks = d.tasks.filter { it.id in planningTaskIds && !it.done }
+        val timedEvents = occurrencesOn(d.events, date)
+            .filterNot { it.allDay }
+            .map { BusyInterval(it.start.toMins(), it.end.toMins()) }
+        val deviceBusy = deviceEvents[date.toIso()].orEmpty()
+            .filterNot { it.allDay }
+            .map { BusyInterval(it.start.toMins(), it.end.toMins()) }
+        val hours = d.prefs.workHours.firstOrNull { it.day == date.dayOfWeek.value }
+            ?: com.bento.calendar.data.WorkHours.defaults().first { it.day == date.dayOfWeek.value }
+        planningResult = suggestDayPlan(
+            date = date,
+            tasks = tasks,
+            existingBlocks = d.taskBlocks,
+            calendarBusy = timedEvents + deviceBusy,
+            workHours = hours,
+            defaultEstimateMin = d.prefs.defaultTaskEstimateMin,
+        )
+    }
+
+    fun confirmPlan() {
+        val result = planningResult ?: return
+        val date = planningDate
+        val now = System.currentTimeMillis()
+        mut { d ->
+            val tasksById = d.tasks.associateBy { it.id }
+            val blocks = result.suggestions.map { suggestion ->
+                val task = tasksById[suggestion.taskId]
+                TaskBlock(
+                    id = newId(),
+                    taskId = suggestion.taskId,
+                    occurrenceKey = task?.takeIf { it.recur != Recur.NONE }?.due,
+                    date = suggestion.date.toIso(),
+                    startMin = suggestion.startMin,
+                    durationMin = suggestion.durationMin,
+                    source = BlockSource.SUGGESTED,
+                    createdAt = now,
+                    updatedAt = now,
+                )
+            }
+            val hours = d.prefs.workHours.firstOrNull { it.day == date.dayOfWeek.value }
+                ?: com.bento.calendar.data.WorkHours.defaults().first { it.day == date.dayOfWeek.value }
+            val plan = DayPlan(
+                date = date.toIso(),
+                workStartMin = hours.start.toMins(),
+                workEndMin = hours.end.toMins(),
+                plannedAt = now,
+            )
+            d.copy(
+                taskBlocks = d.taskBlocks + blocks,
+                dayPlans = d.dayPlans.filterNot { it.date == plan.date } + plan,
+            )
+        }
+        closePlanner()
+    }
+
+    fun scheduleTaskBlock(taskId: String, date: LocalDate, startMin: Int, durationMin: Int) {
+        val now = System.currentTimeMillis()
+        mut { d ->
+            val task = d.tasks.firstOrNull { it.id == taskId } ?: return@mut d
+            val start = (startMin / 15 * 15).coerceIn(0, 1425)
+            val duration = (durationMin / 15 * 15).coerceIn(15, 24 * 60)
+                .coerceAtMost(1440 - start)
+            d.copy(taskBlocks = d.taskBlocks + TaskBlock(
+                id = newId(),
+                taskId = taskId,
+                occurrenceKey = task.takeIf { it.recur != Recur.NONE }?.due,
+                date = date.toIso(),
+                startMin = start,
+                durationMin = duration,
+                createdAt = now,
+                updatedAt = now,
+            ))
+        }
+    }
+
+    fun moveTaskBlock(id: String, date: LocalDate, startMin: Int) {
+        mut { d -> d.copy(taskBlocks = d.taskBlocks.map { block ->
+            if (block.id != id) block else block.copy(
+                date = date.toIso(),
+                startMin = (startMin / 15 * 15).coerceIn(0, 1440 - block.durationMin),
+                source = BlockSource.MANUAL,
+                updatedAt = System.currentTimeMillis(),
+            )
+        }) }
+    }
+
+    fun resizeTaskBlock(id: String, durationMin: Int) {
+        mut { d -> d.copy(taskBlocks = d.taskBlocks.map { block ->
+            if (block.id != id) block else block.copy(
+                durationMin = (durationMin / 15 * 15).coerceIn(15, 1440 - block.startMin),
+                source = BlockSource.MANUAL,
+                updatedAt = System.currentTimeMillis(),
+            )
+        }) }
+    }
+
+    fun removeTaskBlock(id: String) = mut { d ->
+        d.copy(taskBlocks = d.taskBlocks.filterNot { it.id == id })
+    }
+
+    fun reviewExpiredBlock(id: String, action: String) {
+        val block = data.value?.taskBlocks?.firstOrNull { it.id == id } ?: return
+        when (action) {
+            "tomorrow" -> moveTaskBlock(id, today().plusDays(1), block.startMin)
+            "complete" -> {
+                val task = data.value?.tasks?.firstOrNull { it.id == block.taskId }
+                if (task != null && !task.done) toggleTask(block.taskId)
+                else mut { d -> d.copy(taskBlocks = d.taskBlocks.map {
+                    if (it.id == id) it.copy(state = BlockState.COMPLETED, updatedAt = System.currentTimeMillis()) else it
+                }) }
+            }
+            "skip" -> mut { d -> d.copy(taskBlocks = d.taskBlocks.map {
+                if (it.id == id) it.copy(state = BlockState.SKIPPED, updatedAt = System.currentTimeMillis()) else it
+            }) }
+            else -> removeTaskBlock(id)
+        }
+    }
+
+    // ---- Focus sessions ----
+
+    fun activeFocusSession(): FocusSession? = data.value?.let(::activeFocus)
+
+    fun activeFocusElapsedSeconds(): Long = activeFocusSession()?.let {
+        focusElapsedSeconds(it, System.currentTimeMillis(), SystemClock.elapsedRealtime())
+    } ?: 0L
+
+    fun startFocus(taskId: String, blockId: String? = null) {
+        val snapshot = data.value ?: return
+        if (activeFocus(snapshot) != null) return
+        val task = snapshot.tasks.firstOrNull { it.id == taskId } ?: return
+        val block = blockId?.let { id -> snapshot.taskBlocks.firstOrNull { it.id == id } }
+        val targetSeconds = (
+            block?.durationMin ?: task.estimateMin ?: snapshot.prefs.defaultTaskEstimateMin
+            ) * 60L
+        mut {
+            com.bento.calendar.data.startFocus(
+                it, taskId, blockId, System.currentTimeMillis(), targetSeconds,
+                SystemClock.elapsedRealtime(),
+            )
+        }
+    }
+
+    fun pauseFocus() = mut {
+        com.bento.calendar.data.pauseFocus(it, System.currentTimeMillis(), SystemClock.elapsedRealtime())
+    }
+    fun resumeFocus() = mut {
+        com.bento.calendar.data.resumeFocus(it, System.currentTimeMillis(), SystemClock.elapsedRealtime())
+    }
+    fun extendFocus() = mut { com.bento.calendar.data.extendFocus(it) }
+
+    fun finishFocus(complete: Boolean = false) {
+        val session = activeFocusSession() ?: return
+        mut { current ->
+            val elapsedSeconds = focusElapsedSeconds(session, System.currentTimeMillis(), SystemClock.elapsedRealtime())
+            var finished = com.bento.calendar.data.finishFocus(
+                current, System.currentTimeMillis(), SystemClock.elapsedRealtime(),
+            )
+            if (!complete && session.taskId != null) {
+                val focusedMin = (elapsedSeconds / 60).toInt()
+                finished = finished.copy(tasks = finished.tasks.map { task ->
+                    if (task.id != session.taskId || task.estimateMin == null) task else task.copy(
+                        estimateMin = (task.estimateMin - focusedMin).coerceAtLeast(15),
+                    )
+                })
+            }
+            val taskId = session.taskId
+            if (complete && taskId != null && finished.tasks.any { it.id == taskId && !it.done }) {
+                completeTaskWithBlocks(finished, taskId, today())
+            } else {
+                finished
+            }
         }
     }
 
@@ -796,6 +1053,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 cat = p.categoryId.orEmpty(),
                 recur = p.recur,
                 priority = p.priority,
+                estimateMin = p.estimateMin,
             )
             mut { x -> x.copy(tasks = x.tasks + tk) }
         }
@@ -813,8 +1071,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             dismissUndo()
             mut { x ->
                 val done = x.tasks.filter { it.done }
-                x.copy(tasks = x.tasks.filter { !it.done })
-                    .withTrashed(*done.map { trashEntry(t = it) }.toTypedArray())
+                val doneIds = done.mapTo(mutableSetOf()) { it.id }
+                x.copy(
+                    tasks = x.tasks.filter { !it.done },
+                    taskBlocks = x.taskBlocks.filterNot {
+                        it.taskId in doneIds && it.state == BlockState.PLANNED
+                    },
+                ).withTrashed(*done.map { task ->
+                    trashEntry(t = task, blocks = x.taskBlocks.filter {
+                        it.taskId == task.id && it.state == BlockState.PLANNED
+                    })
+                }.toTypedArray())
             }
         }
     }
@@ -1262,6 +1529,38 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun toggleMonday() = mutPrefs { it.copy(monday = !it.monday) }
     fun setRemindDef(v: Int?) = mutPrefs { it.copy(remindDef = v) }
     fun setDurDef(v: Int) = mutPrefs { it.copy(durDef = v) }
+    fun setDefaultTaskEstimate(v: Int) = mutPrefs {
+        it.copy(defaultTaskEstimateMin = v.coerceIn(15, 240))
+    }
+    fun setBlockReminder(v: Int?) = mutPrefs {
+        it.copy(blockReminderMin = v?.coerceIn(0, 1440))
+    }
+    fun setWorkHours(day: Int, enabled: Boolean? = null, start: String? = null, end: String? = null) =
+        mutPrefs { prefs ->
+            val current = prefs.workHours.ifEmpty { com.bento.calendar.data.WorkHours.defaults() }
+            prefs.copy(workHours = current.map { hours ->
+                if (hours.day != day) hours else {
+                    var nextStart = start ?: hours.start
+                    var nextEnd = end ?: hours.end
+                    if (nextStart.toMins() >= nextEnd.toMins()) {
+                        if (start != null) {
+                            val startMin = nextStart.toMins().coerceAtMost(1438)
+                            nextStart = minsToHm(startMin)
+                            nextEnd = minsToHm((startMin + 60).coerceAtMost(1439))
+                        } else {
+                            val endMin = nextEnd.toMins().coerceAtLeast(1)
+                            nextEnd = minsToHm(endMin)
+                            nextStart = minsToHm((endMin - 60).coerceAtLeast(0))
+                        }
+                    }
+                    hours.copy(
+                        enabled = enabled ?: hours.enabled,
+                        start = nextStart,
+                        end = nextEnd,
+                    )
+                }
+            })
+        }
 
     // ---- Data ----
     fun resetApp() {
@@ -1277,6 +1576,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     tasks = emptyList(),
                     notes = emptyList(),
                     trash = emptyList(),
+                    taskBlocks = emptyList(),
+                    dayPlans = emptyList(),
+                    focusSessions = emptyList(),
+                    focusDailyTotals = emptyList(),
                 )
             }
             unlocked = emptySet()
@@ -1398,7 +1701,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Swipe-left on a task row: delete with undo, restored at its old spot. */
     fun deleteTaskBySwipe(t: TaskItem) {
         val idx = data.value?.tasks?.indexOfFirst { it.id == t.id } ?: -1
-        mut { x -> x.copy(tasks = x.tasks.filter { it.id != t.id }).withTrashed(trashEntry(t = t)) }
+        val blocks = data.value?.taskBlocks?.filter {
+            it.taskId == t.id && it.state == BlockState.PLANNED
+        }.orEmpty()
+        mut { x -> x.copy(
+            tasks = x.tasks.filter { it.id != t.id },
+            taskBlocks = x.taskBlocks.filterNot {
+                it.taskId == t.id && it.state == BlockState.PLANNED
+            },
+        ).withTrashed(trashEntry(t = t, blocks = blocks)) }
         offerUndo("task") { x ->
             if (x.tasks.any { it.id == t.id }) {
                 x
@@ -1411,6 +1722,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     } else {
                         x.tasks.toMutableList().apply { add(idx.coerceAtMost(size), t) }
                     },
+                    taskBlocks = (x.taskBlocks + blocks).distinctBy { it.id },
                 )
             }
         }
@@ -1457,14 +1769,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         e: EventItem? = null,
         t: TaskItem? = null,
         n: NoteItem? = null,
-    ) = TrashEntry(deletedAt = System.currentTimeMillis(), event = e, task = t, note = n)
+        blocks: List<TaskBlock> = emptyList(),
+    ) = TrashEntry(
+        deletedAt = System.currentTimeMillis(), event = e, task = t, note = n,
+        taskBlocks = blocks,
+    )
 
     /** Put a trashed item back; ids are UUIDs so collisions mean "already back". */
     fun restoreTrash(entry: TrashEntry) {
         mut { x ->
             var d = x.copy(trash = x.trash - entry)
             entry.event?.let { e -> if (d.events.none { it.id == e.id }) d = d.copy(events = d.events + e) }
-            entry.task?.let { t -> if (d.tasks.none { it.id == t.id }) d = d.copy(tasks = d.tasks + t) }
+            entry.task?.let { t ->
+                if (d.tasks.none { it.id == t.id }) d = d.copy(
+                    tasks = d.tasks + t,
+                    taskBlocks = (d.taskBlocks + entry.taskBlocks).distinctBy { it.id },
+                )
+            }
             entry.note?.let { n -> if (d.notes.none { it.id == n.id }) d = d.copy(notes = d.notes + n) }
             d
         }
@@ -1657,7 +1978,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val obj = backupJson.parseToJsonElement(text) as? JsonObject ?: return false
             val hasMarker =
                 (obj[BACKUP_FORMAT_KEY] as? JsonPrimitive)?.content == BACKUP_FORMAT
-            val knownKeys = listOf("events", "tasks", "notes", "prefs", "pin")
+            val knownKeys = listOf(
+                "events", "tasks", "notes", "prefs", "pin", "taskBlocks", "dayPlans", "focusSessions",
+            )
             if (!hasMarker && knownKeys.none { obj.containsKey(it) }) return false
             val decoded = backupJson.decodeFromJsonElement(AppData.serializer(), obj)
             // Semantic validation: date/start/end/due are plain strings, and a
@@ -1703,6 +2026,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         remindAt = it.remindAt?.takeIf { r ->
                             it.due != null && runCatching { r.toMins() }.isSuccess
                         },
+                        estimateMin = it.estimateMin?.coerceIn(15, 24 * 60),
                     )
                 },
                 notes = decoded.notes.map { n ->
@@ -1725,9 +2049,55 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             entry.task?.let { t ->
                                 t.due?.toDate()
                                 t.remindAt?.toMins()
+                                entry.taskBlocks.forEach { block ->
+                                    require(block.taskId == t.id)
+                                    block.date.toDate()
+                                    require(block.startMin in 0..1425)
+                                    require(block.durationMin in 15..1440)
+                                    require(block.startMin % 15 == 0 && block.durationMin % 15 == 0)
+                                    require(block.startMin + block.durationMin <= 1440)
+                                    require(block.state in BlockState.ALL)
+                                }
                             }
                         }.isSuccess
                 }.take(Trash.MAX_ENTRIES),
+                taskBlocks = decoded.taskBlocks.mapNotNull { block ->
+                    block.takeIf {
+                        block.id.isNotBlank() && block.taskId.isNotBlank() &&
+                        decoded.tasks.any { it.id == block.taskId } &&
+                        runCatching { block.date.toDate() }.isSuccess &&
+                        block.startMin in 0..1425 && block.durationMin in 15..1440 &&
+                        block.startMin % 15 == 0 && block.durationMin % 15 == 0 &&
+                        block.startMin + block.durationMin <= 1440 && block.state in BlockState.ALL
+                    }?.copy(source = block.source.takeIf { it in BlockSource.ALL } ?: BlockSource.MANUAL)
+                },
+                dayPlans = decoded.dayPlans.mapNotNull { plan ->
+                    runCatching {
+                        plan.date.toDate()
+                        require(plan.workStartMin in 0..1439 && plan.workEndMin in 1..1440)
+                        require(plan.workEndMin > plan.workStartMin)
+                        plan
+                    }.getOrNull()
+                }.distinctBy { it.date },
+                focusSessions = decoded.focusSessions.mapNotNull { session ->
+                    session.takeIf {
+                        session.id.isNotBlank() && session.taskTitleSnapshot.isNotBlank() &&
+                        session.startedAt > 0 && session.targetSeconds >= 60 &&
+                        session.activeSeconds >= 0 && session.outcome in com.bento.calendar.data.FocusOutcome.ALL
+                    }?.let { valid ->
+                        if (valid.outcome == com.bento.calendar.data.FocusOutcome.ACTIVE ||
+                            valid.outcome == com.bento.calendar.data.FocusOutcome.PAUSED
+                        ) valid.copy(
+                            runningSince = null,
+                            runningSinceElapsed = null,
+                            endedAt = System.currentTimeMillis(),
+                            outcome = com.bento.calendar.data.FocusOutcome.INTERRUPTED,
+                        ) else valid
+                    }
+                }.takeLast(10_000),
+                focusDailyTotals = decoded.focusDailyTotals.filter { total ->
+                    total.activeSeconds >= 0 && runCatching { total.date.toDate() }.isSuccess
+                }.distinctBy { it.date to it.categoryId },
                 prefs = decoded.prefs.copy(
                     accent = accent,
                     durDef = decoded.prefs.durDef.coerceAtLeast(1),
@@ -1735,6 +2105,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     lastCalView = decoded.prefs.lastCalView
                         .takeIf { it in setOf("month", "week", "day", "agenda") }
                         ?: "month",
+                    defaultTaskEstimateMin = decoded.prefs.defaultTaskEstimateMin.coerceIn(15, 240),
+                    blockReminderMin = decoded.prefs.blockReminderMin?.coerceIn(0, 24 * 60),
+                    workHours = decoded.prefs.workHours.mapNotNull { hours ->
+                        runCatching {
+                            val start = hours.start.toMins()
+                            val end = hours.end.toMins()
+                            require(hours.day in 1..7 && end > start)
+                            hours
+                        }.getOrNull()
+                    }.takeIf { it.map { h -> h.day }.toSet().size == 7 }
+                        ?: com.bento.calendar.data.WorkHours.defaults(),
                 ),
             )
         } catch (_: Exception) {

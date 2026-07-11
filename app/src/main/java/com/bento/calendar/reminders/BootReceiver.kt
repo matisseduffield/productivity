@@ -4,6 +4,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.bento.calendar.data.AppGraph
+import com.bento.calendar.data.interruptFocus
+import com.bento.calendar.focus.FocusTimer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -29,7 +31,13 @@ class BootReceiver : BroadcastReceiver() {
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                ReminderScheduler.reschedule(context, AppGraph.repository(context).data.first())
+                val repo = AppGraph.repository(context)
+                var data = repo.data.first()
+                if (action == Intent.ACTION_BOOT_COMPLETED) {
+                    data = repo.update { interruptFocus(it, System.currentTimeMillis()) }
+                }
+                ReminderScheduler.reschedule(context, data)
+                FocusTimer.sync(context, data)
                 // The scheduler chain only covers upcoming reminders; snoozes
                 // armed by ReminderReceiver.handleSnooze are separate one-shot
                 // alarms that a reboot silently discards. Re-arm the persisted

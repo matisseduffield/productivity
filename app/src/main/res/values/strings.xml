@@ -10,4 +10,5 @@
     <string name="widget_month_description">Mini month with event dots</string>
     <string name="widget_quick_add_description">One-tap new event, task, note and search</string>
     <string name="widget_note_description">Your pinned note</string>
+    <string name="widget_daily_plan_description">Today\'s timeboxed tasks and focus timer</string>
 </resources>

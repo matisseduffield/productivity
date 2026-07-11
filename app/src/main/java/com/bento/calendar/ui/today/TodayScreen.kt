@@ -31,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -48,6 +49,11 @@ import com.bento.calendar.data.DeviceEvent
 import com.bento.calendar.data.EventItem
 import com.bento.calendar.data.NoteItem
 import com.bento.calendar.data.Priority
+import com.bento.calendar.data.BlockState
+import com.bento.calendar.data.TaskBlock
+import com.bento.calendar.data.FocusOutcome
+import com.bento.calendar.data.BusyInterval
+import com.bento.calendar.data.suggestDayPlan
 import com.bento.calendar.data.TaskItem
 import com.bento.calendar.data.occurrencesOn
 import com.bento.calendar.data.toIso
@@ -69,6 +75,7 @@ import com.bento.calendar.ui.theme.color
 import com.bento.calendar.ui.theme.hexColor
 import java.time.LocalDate
 import java.time.LocalDateTime
+import kotlinx.coroutines.delay
 
 /**
  * The Today landing tab: greeting header + bento grid (Up next, Tasks,
@@ -199,6 +206,17 @@ private fun TodayBody(
                 AllDayPillRow(vm, allDayT)
             }
 
+            val expiredBlocks = data.taskBlocks.filter { it.date < today.toIso() && it.state == BlockState.PLANNED }
+            if (expiredBlocks.isNotEmpty()) RolloverReviewCard(vm, data, expiredBlocks)
+            if (vm.activeFocusSession() != null) ActiveFocusCard(vm)
+            DailyPlanCard(vm, data, today, use24h)
+            if (vm.planningOpen && vm.planningDate == today) {
+                PlanningBuilder(vm, data, use24h)
+            }
+            if (data.focusSessions.isNotEmpty() || data.taskBlocks.any { it.state == BlockState.COMPLETED }) {
+                ReviewInsightsCard(data, today)
+            }
+
             // Bento grid (.bgrid): 2 columns, 10dp gap, 14dp top margin.
             Column(
                 Modifier
@@ -222,6 +240,374 @@ private fun TodayBody(
 
                 LaterTodayTile(vm, data, evT, nx, use24h, devT, nowMin, onDeviceTap)
             }
+        }
+    }
+}
+
+@Composable
+private fun ReviewInsightsCard(data: AppData, today: LocalDate) {
+    val c = LocalBento.current
+    val zone = java.time.ZoneId.systemDefault()
+    fun sessionDate(epoch: Long): LocalDate = java.time.Instant.ofEpochMilli(epoch).atZone(zone).toLocalDate()
+    val todaySessions = data.focusSessions.filter { sessionDate(it.startedAt) == today }
+    val weekSessions = data.focusSessions.filter { sessionDate(it.startedAt) in today.minusDays(6)..today }
+    val actualToday = todaySessions.sumOf { it.activeSeconds } / 60
+    val actualWeek = weekSessions.sumOf { it.activeSeconds } / 60
+    val plannedToday = data.taskBlocks.filter { it.date == today.toIso() }.sumOf { it.durationMin }
+    val completedToday = data.taskBlocks.count { it.date == today.toIso() && it.state == BlockState.COMPLETED }
+    Tile(Modifier.fillMaxWidth()) {
+        Eyebrow("REVIEW", c.sub)
+        Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            ReviewMetric("Today", "${actualToday}m", "of ${plannedToday}m planned", Modifier.weight(1f))
+            ReviewMetric("Completed", completedToday.toString(), "planned blocks", Modifier.weight(1f))
+            ReviewMetric("7 days", "${actualWeek / 60}h ${actualWeek % 60}m", "focused", Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun ReviewMetric(label: String, value: String, sub: String, modifier: Modifier = Modifier) {
+    val c = LocalBento.current
+    Column(modifier) {
+        Text(label, fontSize = 9.5.sp, fontWeight = FontWeight.W700, color = c.faint)
+        Text(value, fontSize = 16.sp, fontWeight = FontWeight.W700, color = c.tx, modifier = Modifier.padding(top = 3.dp))
+        Text(sub, fontSize = 9.5.sp, color = c.sub, maxLines = 1)
+    }
+}
+
+@Composable
+private fun RolloverReviewCard(vm: AppViewModel, data: AppData, blocks: List<TaskBlock>) {
+    val c = LocalBento.current
+    val tasks = data.tasks.associateBy { it.id }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp)
+            .background(c.tile, RoundedCornerShape(19.dp))
+            .border(1.dp, c.dng.copy(alpha = 0.45f), RoundedCornerShape(19.dp))
+            .padding(15.dp),
+    ) {
+        Text("UNFINISHED PLAN", fontSize = 9.5.sp, fontWeight = FontWeight.W700, color = c.dng, letterSpacing = 0.12.em)
+        Text("Decide what happens next — Bento never rolls work forward silently.", fontSize = 11.5.sp, color = c.sub, modifier = Modifier.padding(top = 4.dp))
+        blocks.take(8).forEach { block ->
+            val task = tasks[block.taskId]
+            Column(Modifier.fillMaxWidth().padding(top = 10.dp)) {
+                Text(task?.title ?: "Deleted task", fontSize = 12.5.sp, fontWeight = FontWeight.W600, color = c.tx)
+                Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    ReviewAction("Tomorrow") { vm.reviewExpiredBlock(block.id, "tomorrow") }
+                    ReviewAction("Backlog") { vm.reviewExpiredBlock(block.id, "backlog") }
+                    ReviewAction("Done") { vm.reviewExpiredBlock(block.id, "complete") }
+                    ReviewAction("Discard") { vm.reviewExpiredBlock(block.id, "skip") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReviewAction(label: String, onClick: () -> Unit) {
+    val c = LocalBento.current
+    Text(
+        label,
+        fontSize = 10.5.sp,
+        fontWeight = FontWeight.W700,
+        color = c.sub,
+        modifier = Modifier.tap(onClick = onClick).background(c.inp, RoundedCornerShape(9.dp)).padding(horizontal = 8.dp, vertical = 6.dp),
+    )
+}
+
+@Composable
+private fun ActiveFocusCard(vm: AppViewModel) {
+    val c = LocalBento.current
+    val session = vm.activeFocusSession() ?: return
+    var tick by remember(session.id) { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(session.id, session.outcome) {
+        while (true) {
+            delay(1_000)
+            tick = System.currentTimeMillis()
+        }
+    }
+    val elapsed = tick.let { vm.activeFocusElapsedSeconds() }
+    val remaining = (session.targetSeconds - elapsed).coerceAtLeast(0)
+    val ratio = (elapsed.toFloat() / session.targetSeconds.coerceAtLeast(1)).coerceIn(0f, 1f)
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp)
+            .background(c.accTint(0.15f).compositeOver(c.tile), RoundedCornerShape(19.dp))
+            .border(1.dp, c.accTint(0.5f), RoundedCornerShape(19.dp))
+            .padding(15.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(BentoIcons.Timer, null, tint = c.acc, modifier = Modifier.size(17.dp))
+            Column(Modifier.padding(start = 9.dp).weight(1f)) {
+                Text("FOCUSING", fontSize = 9.5.sp, fontWeight = FontWeight.W700, color = c.acc, letterSpacing = 0.12.em)
+                Text(session.taskTitleSnapshot, fontSize = 15.sp, fontWeight = FontWeight.W700, color = c.tx, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Text(
+                "%02d:%02d".format(remaining / 60, remaining % 60),
+                fontSize = 18.sp,
+                fontWeight = FontWeight.W700,
+                color = if (remaining == 0L) c.dng else c.tx,
+            )
+        }
+        Box(Modifier.fillMaxWidth().padding(top = 10.dp).height(6.dp).background(c.inp, RoundedCornerShape(3.dp))) {
+            Box(Modifier.fillMaxWidth(ratio).fillMaxHeight().background(c.acc, RoundedCornerShape(3.dp)))
+        }
+        Row(Modifier.padding(top = 11.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            val paused = session.outcome == FocusOutcome.PAUSED
+            FocusAction(if (paused) "Resume" else "Pause", primary = false) {
+                if (paused) vm.resumeFocus() else vm.pauseFocus()
+            }
+            if (remaining == 0L) FocusAction("+15 min", primary = false, onClick = vm::extendFocus)
+            FocusAction("Stop", primary = false) { vm.finishFocus() }
+            FocusAction("Done", primary = true) { vm.finishFocus(complete = true) }
+        }
+    }
+}
+
+@Composable
+private fun FocusAction(label: String, primary: Boolean, onClick: () -> Unit) {
+    val c = LocalBento.current
+    Box(
+        Modifier
+            .tap(onClick = onClick)
+            .background(if (primary) c.acc else c.inp, RoundedCornerShape(11.dp))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        Text(label, fontSize = 11.5.sp, fontWeight = FontWeight.W700, color = if (primary) Color.White else c.sub)
+    }
+}
+
+/** Today's planned work and capacity — the command center for Bento v3. */
+@Composable
+private fun DailyPlanCard(vm: AppViewModel, data: AppData, today: LocalDate, use24h: Boolean) {
+    val c = LocalBento.current
+    val iso = today.toIso()
+    val blocks = data.taskBlocks
+        .filter { it.date == iso && it.state == BlockState.PLANNED }
+        .sortedBy { it.startMin }
+    val tasks = data.tasks.associateBy { it.id }
+    val hours = data.prefs.workHours.firstOrNull { it.day == today.dayOfWeek.value }
+    val capacity = hours?.let { work ->
+        val busy = occurrencesOn(data.events, today).filterNot { it.allDay }
+            .map { BusyInterval(it.start.toMins(), it.end.toMins()) } +
+            vm.deviceEvents[iso].orEmpty().filterNot { it.allDay }
+                .map { BusyInterval(it.start.toMins(), it.end.toMins()) }
+        suggestDayPlan(today, emptyList(), emptyList(), busy, work, data.prefs.defaultTaskEstimateMin)
+            .availableMinutes
+    } ?: 0
+    val planned = blocks.sumOf { it.durationMin }
+    val ratio = if (capacity > 0) (planned.toFloat() / capacity).coerceIn(0f, 1f) else 0f
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp)
+            .background(c.tile, RoundedCornerShape(19.dp))
+            .border(1.dp, c.bd, RoundedCornerShape(19.dp))
+            .padding(15.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(BentoIcons.Clock, null, tint = c.acc, modifier = Modifier.size(16.dp))
+            Text(
+                "DAILY PLAN",
+                fontSize = 9.5.sp,
+                fontWeight = FontWeight.W700,
+                letterSpacing = 0.14.em,
+                color = c.acc,
+                modifier = Modifier.padding(start = 7.dp),
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                if (capacity > 0) "${planned / 60}h ${planned % 60}m / ${capacity / 60}h" else "Day off",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.W600,
+                color = if (planned > capacity && capacity > 0) c.dng else c.sub,
+            )
+        }
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .padding(top = 10.dp)
+                .height(6.dp)
+                .background(c.inp, RoundedCornerShape(3.dp)),
+        ) {
+            if (ratio > 0f) {
+                Box(
+                    Modifier
+                        .fillMaxWidth(ratio)
+                        .fillMaxHeight()
+                        .background(if (planned > capacity) c.dng else c.acc, RoundedCornerShape(3.dp)),
+                )
+            }
+        }
+        if (blocks.isEmpty()) {
+            Text(
+                "Build a realistic plan around today's calendar.",
+                fontSize = 12.sp,
+                color = c.sub,
+                modifier = Modifier.padding(top = 11.dp),
+            )
+        } else {
+            Column(Modifier.padding(top = 8.dp)) {
+                blocks.take(4).forEach { block ->
+                    val task = tasks[block.taskId] ?: return@forEach
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .tap { vm.openTask(task, switchTab = false) }
+                            .padding(vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            Fmt.time(com.bento.calendar.data.minsToHm(block.startMin), use24h),
+                            fontSize = 11.sp,
+                            color = c.faint,
+                            modifier = Modifier.width(58.dp),
+                        )
+                        Dot(Priority.colorHex(task.priority)?.let(::hexColor) ?: c.acc, 6.dp)
+                        Text(
+                            task.title,
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.W600,
+                            color = c.tx,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(start = 8.dp).weight(1f),
+                        )
+                        Box(Modifier.tap { vm.startFocus(task.id, block.id) }.padding(5.dp)) {
+                            Icon(BentoIcons.Timer, null, tint = c.acc, modifier = Modifier.size(13.dp))
+                        }
+                        Text("${block.durationMin}m", fontSize = 10.5.sp, color = c.sub)
+                    }
+                }
+                if (blocks.size > 4) {
+                    Text("+${blocks.size - 4} more blocks", fontSize = 11.sp, color = c.faint)
+                }
+            }
+        }
+        Row(
+            Modifier
+                .padding(top = 11.dp)
+                .tap { if (vm.planningOpen) vm.closePlanner() else vm.openPlanner(today) }
+                .background(c.accTint(0.14f), RoundedCornerShape(12.dp))
+                .padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(BentoIcons.Timer, null, tint = c.acc, modifier = Modifier.size(14.dp))
+            Text(
+                if (vm.planningOpen) "Close planner" else if (blocks.isEmpty()) "Plan my day" else "Adjust plan",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.W700,
+                color = c.acc,
+                modifier = Modifier.padding(start = 7.dp),
+            )
+        }
+    }
+}
+
+/** Inline, confirm-before-writing planner. Suggestions remain transient. */
+@Composable
+private fun PlanningBuilder(vm: AppViewModel, data: AppData, use24h: Boolean) {
+    val c = LocalBento.current
+    val result = vm.planningResult
+    val candidates = data.tasks.filter { !it.done }
+    val byId = data.tasks.associateBy { it.id }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 10.dp)
+            .background(c.tile, RoundedCornerShape(19.dp))
+            .border(1.dp, c.accTint(0.35f), RoundedCornerShape(19.dp))
+            .padding(15.dp),
+    ) {
+        Text("Choose today’s work", fontSize = 16.sp, fontWeight = FontWeight.W700, color = c.tx)
+        Text(
+            "Bento suggests urgent and high-priority tasks. Nothing is scheduled until you confirm.",
+            fontSize = 11.5.sp,
+            color = c.sub,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+        Column(Modifier.padding(top = 8.dp)) {
+            candidates.take(12).forEach { task ->
+                val checked = task.id in vm.planningTaskIds
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .tap { vm.togglePlanningTask(task.id) }
+                        .padding(vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    BentoCheckbox(checked, onToggle = { vm.togglePlanningTask(task.id) }, size = 18.dp, corner = 6.dp)
+                    Text(
+                        task.title,
+                        fontSize = 12.5.sp,
+                        color = c.tx,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(start = 9.dp).weight(1f),
+                    )
+                    Text(
+                        "${task.estimateMin ?: data.prefs.defaultTaskEstimateMin}m" + if (task.estimateMin == null) "*" else "",
+                        fontSize = 10.5.sp,
+                        color = c.faint,
+                    )
+                }
+            }
+        }
+        if (result != null) {
+            Text(
+                "PROPOSED TIMELINE",
+                fontSize = 9.5.sp,
+                fontWeight = FontWeight.W700,
+                letterSpacing = 0.12.em,
+                color = c.sub,
+                modifier = Modifier.padding(top = 12.dp),
+            )
+            result.suggestions.forEach { suggestion ->
+                val task = byId[suggestion.taskId] ?: return@forEach
+                Row(Modifier.fillMaxWidth().padding(top = 7.dp)) {
+                    Text(
+                        Fmt.time(com.bento.calendar.data.minsToHm(suggestion.startMin), use24h),
+                        fontSize = 11.sp,
+                        color = c.acc,
+                        modifier = Modifier.width(58.dp),
+                    )
+                    Text(task.title, fontSize = 12.sp, color = c.tx, modifier = Modifier.weight(1f))
+                    Text("${suggestion.durationMin}m", fontSize = 10.5.sp, color = c.sub)
+                }
+            }
+            val overflow = result.unscheduledMinutes.values.sum()
+            if (overflow > 0) {
+                Text(
+                    "$overflow min won’t fit today and will stay unscheduled.",
+                    fontSize = 11.sp,
+                    color = c.dng,
+                    modifier = Modifier.padding(top = 9.dp),
+                )
+            }
+        }
+        Row(
+            Modifier.fillMaxWidth().padding(top = 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Box(
+                Modifier
+                    .weight(1f)
+                    .tap { vm.closePlanner() }
+                    .background(c.inp, RoundedCornerShape(12.dp))
+                    .padding(vertical = 11.dp),
+                contentAlignment = Alignment.Center,
+            ) { Text("Cancel", fontSize = 12.sp, fontWeight = FontWeight.W700, color = c.sub) }
+            Box(
+                Modifier
+                    .weight(1f)
+                    .tap { vm.confirmPlan() }
+                    .background(c.acc, RoundedCornerShape(12.dp))
+                    .padding(vertical = 11.dp),
+                contentAlignment = Alignment.Center,
+            ) { Text("Confirm plan", fontSize = 12.sp, fontWeight = FontWeight.W700, color = Color.White) }
         }
     }
 }

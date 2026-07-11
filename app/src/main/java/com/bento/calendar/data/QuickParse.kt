@@ -24,6 +24,8 @@ data class QuickParsed(
     val recur: String = Recur.NONE,
     /** Matched category id from a #category token, or null for the default. */
     val categoryId: String? = null,
+    /** Duration token on an unscheduled task; null for events or no estimate. */
+    val estimateMin: Int? = null,
 ) {
     val isEvent: Boolean get() = start != null
 }
@@ -427,5 +429,6 @@ fun parseQuickAdd(
         priority = priority,
         recur = recur,
         categoryId = categoryId,
+        estimateMin = if (start == null) durMin else null,
     )
 }

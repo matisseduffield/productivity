@@ -154,6 +154,9 @@ private fun QuickAdd(vm: AppViewModel) {
                         dot = Priority.colorHex(parsed.priority)?.let { hexColor(it) },
                     )
                 }
+                if (!parsed.isEvent && parsed.estimateMin != null) {
+                    PreviewChip("${parsed.estimateMin} min estimate")
+                }
             }
         }
     }

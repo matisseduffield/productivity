@@ -62,6 +62,7 @@ internal fun familyWidgets(): List<GlanceAppWidget> = listOf(
     MonthWidget(),
     QuickAddWidget(),
     NoteWidget(),
+    DailyPlanWidget(),
 )
 
 internal val familyReceivers = listOf(
@@ -71,6 +72,7 @@ internal val familyReceivers = listOf(
     MonthWidgetReceiver::class.java,
     QuickAddWidgetReceiver::class.java,
     NoteWidgetReceiver::class.java,
+    DailyPlanWidgetReceiver::class.java,
 )
 
 /**

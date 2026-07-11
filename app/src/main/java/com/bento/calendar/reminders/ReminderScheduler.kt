@@ -11,7 +11,9 @@ import com.bento.calendar.data.AppData
 import com.bento.calendar.data.occurrencesOn
 import com.bento.calendar.data.toIso
 import com.bento.calendar.data.toTime
+import com.bento.calendar.data.BlockState
 import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.ZoneId
 
 /**
@@ -72,6 +74,16 @@ object ReminderScheduler {
                 val fireAt = date.atTime(remindAt.toTime())
                 if (fireAt.isAfter(after) && (best == null || fireAt.isBefore(best))) {
                     best = fireAt
+                }
+            }
+            val blockRemind = data.prefs.blockReminderMin
+            if (blockRemind != null) {
+                for (block in data.taskBlocks) {
+                    if (block.state != BlockState.PLANNED || block.date != iso) continue
+                    val task = data.tasks.firstOrNull { it.id == block.taskId && !it.done } ?: continue
+                    val fireAt = date.atTime(LocalTime.of(block.startMin / 60, block.startMin % 60))
+                        .minusMinutes(blockRemind.toLong())
+                    if (fireAt.isAfter(after) && (best == null || fireAt.isBefore(best))) best = fireAt
                 }
             }
             // A reminder fires at most 1 day (1440 min) before its occurrence

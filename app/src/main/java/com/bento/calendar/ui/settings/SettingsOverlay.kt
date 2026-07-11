@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -41,9 +42,11 @@ import com.bento.calendar.data.Accents
 import com.bento.calendar.BuildConfig
 import com.bento.calendar.data.AppData
 import com.bento.calendar.ui.AppViewModel
+import com.bento.calendar.ui.Fmt
 import com.bento.calendar.ui.Arm
 import com.bento.calendar.ui.components.BentoSelectField
 import com.bento.calendar.ui.components.BentoSwitch
+import com.bento.calendar.ui.components.BentoTimeField
 import com.bento.calendar.ui.components.FullOverlay
 import com.bento.calendar.ui.components.SectionLabel
 import com.bento.calendar.ui.components.TextLink
@@ -158,6 +161,83 @@ fun SettingsOverlay(
                                     selected = prefs.accent == option.hex,
                                     enabled = !dynamicOn,
                                 ) { vm.setAccent(option.hex) }
+                            }
+                        }
+                    }
+                }
+
+                // ---- Daily planning ----
+                SectionLabel("Daily planning")
+                SettingsCard {
+                    SettingsRow(
+                        icon = BentoIcons.Timer,
+                        title = "Default task estimate",
+                        sub = "Used visibly when a task has no estimate",
+                    ) {
+                        BentoSelectField(
+                            value = prefs.defaultTaskEstimateMin,
+                            options = listOf(
+                                "15 min" to 15, "30 min" to 30, "45 min" to 45,
+                                "1 hour" to 60, "1.5 hours" to 90,
+                            ),
+                            onSelect = vm::setDefaultTaskEstimate,
+                            compact = true,
+                        )
+                    }
+                    SettingsRow(
+                        icon = BentoIcons.Bell,
+                        title = "Block reminder",
+                        sub = "For scheduled task sessions",
+                    ) {
+                        BentoSelectField(
+                            value = prefs.blockReminderMin,
+                            options = listOf<Pair<String, Int?>>(
+                                "None" to null, "At start" to 0, "5 min" to 5, "10 min" to 10,
+                            ),
+                            onSelect = vm::setBlockReminder,
+                            compact = true,
+                        )
+                    }
+                    prefs.workHours.sortedBy { it.day }.forEachIndexed { index, hours ->
+                        val dayName = java.time.DayOfWeek.of(hours.day).name
+                            .lowercase().replaceFirstChar { it.uppercase() }.take(3)
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .then(if (index == prefs.workHours.lastIndex) Modifier else Modifier.hairlineBottom(c.line))
+                                .padding(vertical = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            BentoSwitch(
+                                on = hours.enabled,
+                                onToggle = { vm.setWorkHours(hours.day, enabled = !hours.enabled) },
+                            )
+                            Text(
+                                dayName,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.W700,
+                                color = if (hours.enabled) c.tx else c.faint,
+                                modifier = Modifier.width(32.dp),
+                            )
+                            if (hours.enabled) {
+                                BentoTimeField(
+                                    valueHm = hours.start,
+                                    display = Fmt.time(hours.start, prefs.use24h),
+                                    use24h = prefs.use24h,
+                                    onPick = { vm.setWorkHours(hours.day, start = it) },
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Text("–", color = c.faint)
+                                BentoTimeField(
+                                    valueHm = hours.end,
+                                    display = Fmt.time(hours.end, prefs.use24h),
+                                    use24h = prefs.use24h,
+                                    onPick = { vm.setWorkHours(hours.day, end = it) },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            } else {
+                                Text("Not scheduled", fontSize = 11.5.sp, color = c.faint)
                             }
                         }
                     }

@@ -202,6 +202,36 @@ fun TaskEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
             }
         }
         Column(Modifier.padding(top = 15.dp)) {
+            FieldLabel("Estimate")
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                verticalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                DueChip("None", active = d.estimateMin == null) {
+                    vm.updateTaskDraft { it.copy(estimateMin = null) }
+                }
+                listOf(15, 30, 45, 60, 90, 120).forEach { minutes ->
+                    val label = when (minutes) {
+                        60 -> "1 h"
+                        90 -> "1.5 h"
+                        120 -> "2 h"
+                        else -> "$minutes min"
+                    }
+                    DueChip(label, active = d.estimateMin == minutes) {
+                        vm.updateTaskDraft { it.copy(estimateMin = minutes) }
+                    }
+                }
+            }
+            if (d.estimateMin == null) {
+                Text(
+                    "Planner assumes ${data.prefs.defaultTaskEstimateMin} min until you choose an estimate",
+                    fontSize = 11.sp,
+                    color = c.faint,
+                    modifier = Modifier.padding(start = 2.dp, top = 7.dp),
+                )
+            }
+        }
+        Column(Modifier.padding(top = 15.dp)) {
             FieldLabel("Repeat")
             BentoSelectField(
                 value = d.recur,

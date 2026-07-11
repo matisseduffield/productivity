@@ -68,6 +68,14 @@ class QuickParseTest {
     }
 
     @Test
+    fun `duration without a time becomes a task estimate`() {
+        val p = parse("write proposal for 1.5h")
+        assertFalse(p.isEvent)
+        assertEquals("write proposal", p.title)
+        assertEquals(90, p.estimateMin)
+    }
+
+    @Test
     fun `time without date is an event with a null date`() {
         // The caller (commitQuickAdd) defaults the date to today.
         val p = parse("lunch at 12:30")

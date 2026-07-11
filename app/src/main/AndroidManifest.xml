@@ -44,6 +44,10 @@
             android:exported="false" />
 
         <receiver
+            android:name=".focus.FocusTimerReceiver"
+            android:exported="false" />
+
+        <receiver
             android:name=".updates.UpdateInstallReceiver"
             android:exported="false" />
 
@@ -111,6 +115,17 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/note_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.DailyPlanWidgetReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/daily_plan_widget_info" />
         </receiver>
 
         <!-- Widget date rollover: one-shot alarm re-armed for each next local

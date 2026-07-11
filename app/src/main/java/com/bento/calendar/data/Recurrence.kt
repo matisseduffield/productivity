@@ -48,6 +48,27 @@ fun completeTask(data: AppData, taskId: String, today: LocalDate): AppData =
         },
     )
 
+/** Completion plus the planner lifecycle for every block in this task cycle. */
+fun completeTaskWithBlocks(
+    data: AppData,
+    taskId: String,
+    today: LocalDate,
+    now: Long = System.currentTimeMillis(),
+): AppData {
+    val before = data.tasks.firstOrNull { it.id == taskId } ?: return data
+    val next = completeTask(data, taskId, today)
+    if (before.done) return next
+    val cycle = before.takeIf { it.recur != Recur.NONE }?.due
+    return next.copy(taskBlocks = next.taskBlocks.map { block ->
+        val sameCycle = block.taskId == taskId &&
+            (before.recur == Recur.NONE || block.occurrenceKey == cycle)
+        if (!sameCycle || block.state != BlockState.PLANNED) block else block.copy(
+            state = if (block.date <= today.toIso()) BlockState.COMPLETED else BlockState.SKIPPED,
+            updatedAt = now,
+        )
+    })
+}
+
 /**
  * All occurrences on [date], re-dated to it and sorted by start time.
  * Multi-day events fan out into per-day segments: first day runs start→23:59,

@@ -41,6 +41,17 @@ data class ChangelogEntry(val version: String, val date: String, val changes: Li
 
 val CHANGELOG = listOf(
     ChangelogEntry(
+        "3.0.0", "July 2026",
+        listOf(
+            "Daily planning: choose important work and let Bento propose a realistic schedule around your events",
+            "Timebox tasks more than once, then move and resize their blocks directly in Day and Week views",
+            "Focus timer with pause, resume, extension, persistent notification controls and planned-versus-actual review",
+            "Unfinished plans never move silently — review each block and send it to tomorrow, backlog, done or discard",
+            "New Daily Plan widget, task estimates, configurable working hours and block-start reminders",
+            "Room database foundation keeps growing schedules and focus history fast while existing data migrates automatically",
+        ),
+    ),
+    ChangelogEntry(
         "2.7.0", "July 2026",
         listOf(
             "New Agenda view: see the next 30 days of Bento events, device calendars and due tasks in one list",

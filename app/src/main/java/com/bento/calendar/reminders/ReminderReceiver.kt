@@ -14,7 +14,9 @@ import com.bento.calendar.R
 import com.bento.calendar.data.AppGraph
 import com.bento.calendar.data.Recur
 import com.bento.calendar.data.TaskItem
-import com.bento.calendar.data.completeTask
+import com.bento.calendar.data.completeTaskWithBlocks
+import com.bento.calendar.data.BlockState
+import com.bento.calendar.focus.FocusTimer
 import com.bento.calendar.data.occurrencesOn
 import com.bento.calendar.data.toDate
 import com.bento.calendar.data.toIso
@@ -30,6 +32,7 @@ import org.json.JSONException
 import org.json.JSONObject
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.temporal.ChronoUnit
 
 class ReminderReceiver : BroadcastReceiver() {
@@ -49,8 +52,10 @@ class ReminderReceiver : BroadcastReceiver() {
          * families from (routinely) colliding on notification/requestCode ids.
          */
         private const val TASK_NOTIF_BIT = 0x40000000
+        private const val BLOCK_NOTIF_BIT = 0x20000000
 
         private fun taskNotifId(taskId: String): Int = taskId.hashCode() or TASK_NOTIF_BIT
+        private fun blockNotifId(blockId: String): Int = blockId.hashCode() or BLOCK_NOTIF_BIT
         private const val PREFS_NAME = "reminders"
         private const val KEY_PENDING_SNOOZES = "pendingSnoozes"
         /** Snoozes this far past due at restore time are dropped as stale. */
@@ -279,6 +284,26 @@ class ReminderReceiver : BroadcastReceiver() {
                             )
                         }
                     }
+                    val blockRemind = data.prefs.blockReminderMin
+                    if (blockRemind != null) {
+                        for (block in data.taskBlocks) {
+                            if (block.state != BlockState.PLANNED || block.date != iso) continue
+                            val task = data.tasks.firstOrNull { it.id == block.taskId && !it.done } ?: continue
+                            val fireAt = date.atTime(LocalTime.of(block.startMin / 60, block.startMin % 60))
+                                .minusMinutes(blockRemind.toLong())
+                            val fireMin = toEpochMinutes(fireAt)
+                            if (fireMin in (lastRun + 1)..windowEndMin) {
+                                val notifId = blockNotifId(block.id)
+                                nm.notify(
+                                    notifId,
+                                    buildBlockNotification(
+                                        context, task.title, task.id, block.id,
+                                        block.startMin, data.prefs.use24h, notifId,
+                                    ),
+                                )
+                            }
+                        }
+                    }
                 }
                 prefs.edit().putLong("lastRunMin", windowEndMin).apply()
                 ReminderScheduler.reschedule(context, data)
@@ -371,7 +396,7 @@ class ReminderReceiver : BroadcastReceiver() {
                         // tap must be a no-op — completeTask is a toggle and
                         // would reopen it or skip an occurrence.
                         if (x.tasks.firstOrNull { it.id == taskId }.isActionable()) {
-                            completeTask(x, taskId, LocalDate.now())
+                            completeTaskWithBlocks(x, taskId, LocalDate.now())
                         } else {
                             x
                         }
@@ -450,5 +475,44 @@ class ReminderReceiver : BroadcastReceiver() {
         }
         val text = whenText + if (catLabel != null) " · $catLabel" else ""
         return buildNotification(context, title, text, notifId, taskId)
+    }
+
+    private fun buildBlockNotification(
+        context: Context,
+        title: String,
+        taskId: String,
+        blockId: String,
+        startMin: Int,
+        use24h: Boolean,
+        notifId: Int,
+    ): Notification {
+        val tapIntent = PendingIntent.getActivity(
+            context, notifId,
+            Intent(context, MainActivity::class.java).setAction(WidgetActions.OPEN_TASKS),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val startIntent = PendingIntent.getBroadcast(
+            context, notifId,
+            Intent(context, com.bento.calendar.focus.FocusTimerReceiver::class.java)
+                .setAction(FocusTimer.ACTION_START)
+                .putExtra(FocusTimer.EXTRA_TASK_ID, taskId)
+                .putExtra(FocusTimer.EXTRA_BLOCK_ID, blockId)
+                .putExtra(FocusTimer.EXTRA_SOURCE_NOTIFICATION_ID, notifId),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        return Notification.Builder(context, ReminderScheduler.CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_stat_bell)
+            .setContentTitle(title)
+            .setContentText("Planned now · ${Fmt.time(com.bento.calendar.data.minsToHm(startMin), use24h)}")
+            .setContentIntent(tapIntent)
+            .setAutoCancel(true)
+            .addAction(
+                Notification.Action.Builder(
+                    Icon.createWithResource(context, R.drawable.ic_stat_bell),
+                    "Start focus",
+                    startIntent,
+                ).build(),
+            )
+            .build()
     }
 }

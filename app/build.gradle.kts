@@ -5,6 +5,7 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.ksp)
 }
 
 android {
@@ -18,8 +19,8 @@ android {
         // CI overrides these from the release tag (VERSION_NAME / VERSION_CODE
         // env) so the built APK's version always matches the tag it ships under
         // — a mismatch would make the app see itself as perpetually outdated.
-        versionCode = (System.getenv("VERSION_CODE") ?: "20700").toInt()
-        versionName = System.getenv("VERSION_NAME") ?: "2.7.0"
+        versionCode = (System.getenv("VERSION_CODE") ?: "30000").toInt()
+        versionName = System.getenv("VERSION_NAME") ?: "3.0.0"
     }
 
     signingConfigs {
@@ -47,10 +48,12 @@ android {
 
     buildTypes {
         release {
-            // Deliberately unshrunk: a small personal app where install size is
-            // irrelevant but R8-stripped reflection/serialization paths are a
-            // stability risk we don't need to take.
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
             signingConfig = signingConfigs.getByName("release")
         }
     }
@@ -105,5 +108,9 @@ dependencies {
     implementation(libs.androidx.datastore)
     implementation(libs.androidx.glance.appwidget)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
     testImplementation(libs.junit)
+    testImplementation(libs.androidx.room.testing)
 }
