@@ -81,6 +81,13 @@ object Fmt {
     /** "Thu, 2 July" — Day view title. */
     fun dayTitle(d: LocalDate): String = "${WS[dow(d)]}, ${d.dayOfMonth} ${MN[d.monthValue - 1]}"
 
+    /** "11 Jul – 9 Aug" — the Agenda view's inclusive 30-day window. */
+    fun agendaTitle(start: LocalDate, days: Long = 30): String {
+        val end = start.plusDays(days - 1)
+        return "${start.dayOfMonth} ${MS[start.monthValue - 1]} – " +
+            "${end.dayOfMonth} ${MS[end.monthValue - 1]}"
+    }
+
     /** "Today", "Tomorrow", "8 Jul" — task due chips. */
     fun dueLabel(due: String, today: LocalDate): String {
         val d = due.toDate()

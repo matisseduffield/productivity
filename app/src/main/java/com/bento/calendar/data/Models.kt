@@ -173,6 +173,8 @@ data class Prefs(
     val appLock: Boolean = false,
     /** Show due tasks in the calendar views alongside events. */
     val tasksOnCalendar: Boolean = true,
+    /** Last Calendar mode, restored on the next launch. */
+    val lastCalView: String = "month",
 )
 
 object Recur {

@@ -41,6 +41,15 @@ data class ChangelogEntry(val version: String, val date: String, val changes: Li
 
 val CHANGELOG = listOf(
     ChangelogEntry(
+        "2.7.0", "July 2026",
+        listOf(
+            "New Agenda view: see the next 30 days of Bento events, device calendars and due tasks in one list",
+            "Filter Agenda to everything, events only or tasks only — counts update instantly",
+            "Swipe or use the arrows to move through 30-day windows; tap any date to open its Day view",
+            "Calendar now remembers whether you last used Month, Week, Day or Agenda",
+        ),
+    ),
+    ChangelogEntry(
         "2.6.0", "July 2026",
         listOf(
             "Quick Add understands ISO dates and offsets like “2026-07-15” and “in 2 days”",

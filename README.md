@@ -7,7 +7,7 @@ implementation map).
 
 ## Features
 - **Today** — bento dashboard: up-next event, top tasks, pinned note, week strip, later-today, reminder banner
-- **Calendar** — Month / Week / Day views, recurring events, color categories, tap-empty-slot to create
+- **Calendar** — Month / Week / Day / Agenda views, recurring events, color categories, tap-empty-slot to create
 - **Notes** — pinning + 4-digit-PIN-locked private notes
 - **Tasks** — Overdue / Today / Upcoming / Someday checklist with collapsible Completed
 - Universal search, dark/light theme, 4 accent colors, 24h/12h time, week-start setting

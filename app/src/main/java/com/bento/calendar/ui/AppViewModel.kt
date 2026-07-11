@@ -56,7 +56,15 @@ import kotlin.math.max
 import kotlin.math.min
 
 enum class Tab { Today, Calendar, Notes, Tasks }
-enum class CalView { Month, Week, Day }
+enum class CalView { Month, Week, Day, Agenda }
+
+private fun CalView.prefValue(): String = name.lowercase()
+private fun calViewFromPref(value: String): CalView = when (value) {
+    "week" -> CalView.Week
+    "day" -> CalView.Day
+    "agenda" -> CalView.Agenda
+    else -> CalView.Month
+}
 
 /** Scope of an edit/delete on a recurring event. */
 enum class EditScope { Single, Series }
@@ -179,6 +187,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         viewModelScope.launch {
             val d = repo.data.first()
+            // Calendar mode is lightweight UI state, but restoring it makes
+            // Agenda (and the existing Day/Week modes) a real home workflow
+            // rather than snapping back to Month after every process restart.
+            calViewState = calViewFromPref(d.prefs.lastCalView)
             ReminderScheduler.reschedule(getApplication(), d)
             lastScheduledEvents = d.events
             lastScheduledTasks = d.tasks
@@ -358,9 +370,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     fun setCalView(v: CalView) {
+        if (calViewState == v) return
         calNavDir = 0
         calNavTick++
         calViewState = v
+        mutPrefs { it.copy(lastCalView = v.prefValue()) }
     }
 
     fun calPrev() {
@@ -370,6 +384,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             CalView.Month -> cursor = cursor.minusMonths(1)
             CalView.Week -> selDate = selDate.minusDays(7)
             CalView.Day -> selDate = selDate.minusDays(1)
+            CalView.Agenda -> {
+                selDate = selDate.minusDays(30)
+                cursor = YearMonth.from(selDate)
+            }
         }
         maybeRefreshDeviceWindow()
     }
@@ -381,6 +399,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             CalView.Month -> cursor = cursor.plusMonths(1)
             CalView.Week -> selDate = selDate.plusDays(7)
             CalView.Day -> selDate = selDate.plusDays(1)
+            CalView.Agenda -> {
+                selDate = selDate.plusDays(30)
+                cursor = YearMonth.from(selDate)
+            }
         }
         maybeRefreshDeviceWindow()
     }
@@ -400,6 +422,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // Second tap opens Day view — that's a navigation.
             calNavTick++
             calViewState = CalView.Day
+            mutPrefs { it.copy(lastCalView = CalView.Day.prefValue()) }
         } else {
             selDate = date
             cursor = YearMonth.from(date)
@@ -427,6 +450,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         calNavTick++
         tabState = Tab.Calendar
         calViewState = CalView.Day
+        mutPrefs { it.copy(lastCalView = CalView.Day.prefValue()) }
         selDate = date
         cursor = YearMonth.from(date)
         maybeRefreshDeviceWindow()
@@ -1708,6 +1732,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     accent = accent,
                     durDef = decoded.prefs.durDef.coerceAtLeast(1),
                     remindDef = decoded.prefs.remindDef?.coerceAtLeast(0),
+                    lastCalView = decoded.prefs.lastCalView
+                        .takeIf { it in setOf("month", "week", "day", "agenda") }
+                        ?: "month",
                 ),
             )
         } catch (_: Exception) {
@@ -1715,6 +1742,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         dismissUndo()
         mut { imported }
+        calViewState = calViewFromPref(imported.prefs.lastCalView)
         unlocked = emptySet()
         openNoteId = null
         doneOpen = false

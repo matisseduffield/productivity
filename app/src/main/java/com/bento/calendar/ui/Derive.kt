@@ -1,6 +1,8 @@
 package com.bento.calendar.ui
 
 import com.bento.calendar.data.EventItem
+import com.bento.calendar.data.AppData
+import com.bento.calendar.data.DeviceEvent
 import com.bento.calendar.data.TaskItem
 import com.bento.calendar.data.occurrencesOn
 import com.bento.calendar.data.toIso
@@ -24,6 +26,43 @@ fun sortedOpenTasks(tasks: List<TaskItem>, today: LocalDate): List<TaskItem> {
 }
 
 data class TaskSection(val label: String, val tasks: List<TaskItem>)
+
+/** One non-empty date group in Calendar's rolling Agenda view. */
+data class AgendaDay(
+    val date: LocalDate,
+    val events: List<EventItem>,
+    val deviceEvents: List<DeviceEvent>,
+    val tasks: List<TaskItem>,
+)
+
+/**
+ * Build a chronological rolling agenda. Empty dates are omitted; recurring
+ * and multi-day Bento events expand through [occurrencesOn], device events are
+ * already occurrence-expanded by Calendar Provider, and open due tasks honor
+ * the user's tasks-on-calendar setting.
+ */
+fun agendaDays(
+    data: AppData,
+    deviceEvents: Map<String, List<DeviceEvent>>,
+    start: LocalDate,
+    dayCount: Int = 30,
+): List<AgendaDay> {
+    require(dayCount in 1..366)
+    val tasksByDue = if (data.prefs.tasksOnCalendar) {
+        data.tasks.filter { !it.done && it.due != null }.groupBy { it.due }
+    } else {
+        emptyMap()
+    }
+    return (0 until dayCount).mapNotNull { offset ->
+        val date = start.plusDays(offset.toLong())
+        val iso = date.toIso()
+        val events = occurrencesOn(data.events, date)
+        val device = deviceEvents[iso].orEmpty().sortedBy { it.start }
+        val tasks = tasksByDue[iso].orEmpty().sortedByDescending { it.priority }
+        if (events.isEmpty() && device.isEmpty() && tasks.isEmpty()) null
+        else AgendaDay(date, events, device, tasks)
+    }
+}
 
 /** Overdue / Today / Upcoming / Someday, empty sections dropped. */
 fun taskSections(tasks: List<TaskItem>, today: LocalDate): List<TaskSection> {

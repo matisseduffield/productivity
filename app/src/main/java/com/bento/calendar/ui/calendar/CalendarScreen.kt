@@ -86,6 +86,7 @@ import com.bento.calendar.data.toMins
 import com.bento.calendar.ui.AppViewModel
 import com.bento.calendar.ui.CalView
 import com.bento.calendar.ui.Fmt
+import com.bento.calendar.ui.agendaDays
 import com.bento.calendar.ui.components.BentoCheckbox
 import com.bento.calendar.ui.components.BentoSheet
 import com.bento.calendar.ui.components.Dot
@@ -110,12 +111,14 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 /**
- * Identity of the PERIOD being rendered (month start / week start / day), used
+ * Identity of the PERIOD being rendered (month/week/day/agenda start), used
  * as the [AnimatedContent] target so the exiting content keeps drawing the OLD
  * period while it slides away. Deliberately excludes the day selection: tapping
  * a day pill or month cell must not re-animate the whole view.
  */
 private data class CalTarget(val view: CalView, val periodStart: LocalDate)
+
+private enum class AgendaFilter { All, Events, Tasks }
 
 @Composable
 fun CalendarScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
@@ -139,9 +142,10 @@ private fun CalendarBody(
 ) {
     val scrollState = rememberScrollState()
     val density = LocalDensity.current
+    var agendaFilter by remember { mutableStateOf(AgendaFilter.All) }
 
     // Landing on today's Day view (or the current week's Week view) auto-
-    // scrolls so the now-line sits comfortably in view; Month resets to top.
+    // scrolls so the now-line sits comfortably in view; Month/Agenda reset.
     // Keyed on the explicit nav tick, NOT raw selDate — selecting a day with
     // a header pill or month cell must never hijack the scroll position.
     LaunchedEffect(vm.calNavTick) {
@@ -149,6 +153,7 @@ private fun CalendarBody(
         val nowMin = now.hour * 60 + now.minute
         when (vm.calView) {
             CalView.Month -> scrollState.animateScrollTo(0)
+            CalView.Agenda -> scrollState.animateScrollTo(0)
             CalView.Week -> {
                 val ws = startOfWeek(vm.selDate, data.prefs.monday)
                 if (today >= ws && today <= ws.plusDays(6) && nowMin in 420..1320) {
@@ -206,6 +211,7 @@ private fun CalendarBody(
                     CalView.Month -> CalTarget(CalView.Month, vm.cursor.atDay(1))
                     CalView.Week -> CalTarget(CalView.Week, startOfWeek(vm.selDate, data.prefs.monday))
                     CalView.Day -> CalTarget(CalView.Day, vm.selDate)
+                    CalView.Agenda -> CalTarget(CalView.Agenda, vm.selDate)
                 },
                 transitionSpec = {
                     val dir = vm.calNavDir
@@ -226,6 +232,15 @@ private fun CalendarBody(
                         CalView.Month -> MonthView(vm, data, now, YearMonth.from(target.periodStart), vm.selDate, onDeviceTap)
                         CalView.Week -> WeekView(vm, data, now, target.periodStart, onDeviceTap)
                         CalView.Day -> DayView(vm, data, now, target.periodStart, onDeviceTap)
+                        CalView.Agenda -> AgendaView(
+                            vm = vm,
+                            data = data,
+                            now = now,
+                            start = target.periodStart,
+                            filter = agendaFilter,
+                            onFilter = { agendaFilter = it },
+                            onDeviceTap = onDeviceTap,
+                        )
                     }
                 }
             }
@@ -242,6 +257,7 @@ private fun CalendarHeader(vm: AppViewModel, data: AppData) {
         CalView.Month -> Fmt.monthTitle(vm.cursor)
         CalView.Week -> Fmt.weekTitle(startOfWeek(vm.selDate, data.prefs.monday))
         CalView.Day -> Fmt.dayTitle(vm.selDate)
+        CalView.Agenda -> Fmt.agendaTitle(vm.selDate)
     }
     var pickerOpen by remember { mutableStateOf(false) }
     Row(
@@ -347,6 +363,7 @@ private fun SegmentedControl(vm: AppViewModel) {
         SegButton("Month", vm.calView == CalView.Month, Modifier.weight(1f)) { vm.setCalView(CalView.Month) }
         SegButton("Week", vm.calView == CalView.Week, Modifier.weight(1f)) { vm.setCalView(CalView.Week) }
         SegButton("Day", vm.calView == CalView.Day, Modifier.weight(1f)) { vm.setCalView(CalView.Day) }
+        SegButton("Agenda", vm.calView == CalView.Agenda, Modifier.weight(1f)) { vm.setCalView(CalView.Agenda) }
     }
 }
 
@@ -779,6 +796,205 @@ private fun DeviceAgendaRow(data: AppData, e: DeviceEvent, onTap: () -> Unit) {
             Text(e.title, fontSize = 14.sp, fontWeight = FontWeight.W600, color = c.tx)
             Text(meta, fontSize = 11.5.sp, color = c.sub, modifier = Modifier.padding(top = 2.dp))
         }
+    }
+}
+
+// ---- Agenda view ----
+
+/**
+ * Rolling 30-day list that brings Bento events, read-only device events and
+ * due tasks into one chronological surface. It deliberately reuses the Month
+ * agenda rows so event editing, task completion and device detail behavior are
+ * identical across views.
+ */
+@Composable
+private fun AgendaView(
+    vm: AppViewModel,
+    data: AppData,
+    now: LocalDateTime,
+    start: LocalDate,
+    filter: AgendaFilter,
+    onFilter: (AgendaFilter) -> Unit,
+    onDeviceTap: (DeviceEvent) -> Unit,
+) {
+    val c = LocalBento.current
+    val days = remember(
+        data.events,
+        data.tasks,
+        data.prefs.tasksOnCalendar,
+        vm.deviceEvents,
+        start,
+    ) {
+        agendaDays(data, vm.deviceEvents, start)
+    }
+    val eventCount = days.sumOf { it.events.size + it.deviceEvents.size }
+    val taskCount = days.sumOf { it.tasks.size }
+    val visibleDays = days.filter { day ->
+        when (filter) {
+            AgendaFilter.All -> true
+            AgendaFilter.Events -> day.events.isNotEmpty() || day.deviceEvents.isNotEmpty()
+            AgendaFilter.Tasks -> day.tasks.isNotEmpty()
+        }
+    }
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp)
+            .background(c.tile, RoundedCornerShape(14.dp))
+            .border(1.dp, c.bd, RoundedCornerShape(14.dp))
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        AgendaFilterButton(
+            label = "All",
+            count = eventCount + taskCount,
+            active = filter == AgendaFilter.All,
+            modifier = Modifier.weight(1f),
+        ) { onFilter(AgendaFilter.All) }
+        AgendaFilterButton(
+            label = "Events",
+            count = eventCount,
+            active = filter == AgendaFilter.Events,
+            modifier = Modifier.weight(1f),
+        ) { onFilter(AgendaFilter.Events) }
+        AgendaFilterButton(
+            label = "Tasks",
+            count = taskCount,
+            active = filter == AgendaFilter.Tasks,
+            modifier = Modifier.weight(1f),
+        ) { onFilter(AgendaFilter.Tasks) }
+    }
+
+    if (visibleDays.isEmpty()) {
+        EmptyText(
+            when (filter) {
+                AgendaFilter.All -> "Nothing scheduled in these 30 days."
+                AgendaFilter.Events -> "No events in these 30 days."
+                AgendaFilter.Tasks -> "No due tasks in these 30 days."
+            },
+        )
+        return
+    }
+
+    visibleDays.forEach { day ->
+        val showEvents = filter != AgendaFilter.Tasks
+        val showTasks = filter != AgendaFilter.Events
+        AgendaDayCard(
+            vm = vm,
+            data = data,
+            day = day,
+            today = now.toLocalDate(),
+            showEvents = showEvents,
+            showTasks = showTasks,
+            onDeviceTap = onDeviceTap,
+        )
+    }
+}
+
+@Composable
+private fun AgendaFilterButton(
+    label: String,
+    count: Int,
+    active: Boolean,
+    modifier: Modifier,
+    onClick: () -> Unit,
+) {
+    val c = LocalBento.current
+    Box(
+        modifier
+            .pressable(onClick = onClick)
+            .background(if (active) c.accTint(0.15f) else Color.Transparent, RoundedCornerShape(10.dp))
+            .padding(vertical = 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            "$label  $count",
+            fontSize = 11.5.sp,
+            fontWeight = FontWeight.W600,
+            color = if (active) c.acc else c.sub,
+        )
+    }
+}
+
+@Composable
+private fun AgendaDayCard(
+    vm: AppViewModel,
+    data: AppData,
+    day: com.bento.calendar.ui.AgendaDay,
+    today: LocalDate,
+    showEvents: Boolean,
+    showTasks: Boolean,
+    onDeviceTap: (DeviceEvent) -> Unit,
+) {
+    val c = LocalBento.current
+    val isToday = day.date == today
+    val eventTotal = if (showEvents) day.events.size + day.deviceEvents.size else 0
+    val taskTotal = if (showTasks) day.tasks.size else 0
+    val count = buildString {
+        if (eventTotal > 0) append("$eventTotal ${if (eventTotal == 1) "event" else "events"}")
+        if (taskTotal > 0) {
+            if (isNotEmpty()) append(" · ")
+            append("$taskTotal ${if (taskTotal == 1) "task" else "tasks"}")
+        }
+    }
+    val shape = RoundedCornerShape(16.dp)
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp)
+            .clip(shape)
+            .background(c.tile)
+            .border(1.dp, if (isToday) c.acc.copy(alpha = 0.65f) else c.bd, shape)
+            .padding(start = 10.dp, end = 10.dp, bottom = 5.dp),
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .tap { vm.weekStripTap(day.date) }
+                .padding(horizontal = 2.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    when (day.date) {
+                        today -> "Today"
+                        today.plusDays(1) -> "Tomorrow"
+                        else -> Fmt.WD[Fmt.dow(day.date)]
+                    },
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.W700,
+                    color = if (isToday) c.acc else c.tx,
+                )
+                Text(
+                    "${day.date.dayOfMonth} ${Fmt.MN[day.date.monthValue - 1]} ${day.date.year}",
+                    fontSize = 10.5.sp,
+                    color = c.faint,
+                    modifier = Modifier.padding(top = 1.dp),
+                )
+            }
+            Text(count, fontSize = 10.5.sp, fontWeight = FontWeight.W600, color = c.sub)
+            Icon(
+                BentoIcons.ChevronRight,
+                "Open day",
+                tint = c.faint,
+                modifier = Modifier.padding(start = 6.dp).size(14.dp),
+            )
+        }
+
+        if (showEvents) {
+            val events = (
+                day.events.map { GridBlock(it, null, it.start.toMins(), it.end.toMins()) } +
+                    day.deviceEvents.map { GridBlock(null, it, it.start.toMins(), it.end.toMins()) }
+                ).sortedBy { it.startMin }
+            events.forEach { block ->
+                block.bento?.let { AgendaRow(vm, data, it) }
+                    ?: block.device?.let { device ->
+                        DeviceAgendaRow(data, device, onTap = { onDeviceTap(device) })
+                    }
+            }
+        }
+        if (showTasks) day.tasks.forEach { CalendarTaskRow(vm, it) }
     }
 }
 

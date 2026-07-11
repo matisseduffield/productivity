@@ -23,6 +23,9 @@ The device-calendar overlay is deliberately not stored here: only the user's
 enabled calendar ids are persisted. Device events remain read-only and are
 queried from Android's Calendar Provider when needed.
 
+The last Calendar mode is stored as a small preference (`month`, `week`, `day`
+or `agenda`) so the user's working view survives a process restart.
+
 ## Event invariants
 
 - Dates are ISO `YYYY-MM-DD`; times are `HH:MM`.
