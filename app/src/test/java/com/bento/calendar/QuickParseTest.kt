@@ -1,6 +1,8 @@
 package com.bento.calendar
 
 import com.bento.calendar.data.parseQuickAdd
+import com.bento.calendar.data.Category
+import com.bento.calendar.data.Recur
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -219,13 +221,14 @@ class QuickParseTest {
     }
 
     @Test
-    fun `hyphenated dates are not time ranges`() {
-        // "2026-07-15" must not read its "07-15" as 07:00-15:00 (nor
-        // "05-10-2026" its "05-10") — the range regex rejects digit-hyphen
-        // neighbors on either side.
+    fun `ISO date parses while other hyphenated dates are not time ranges`() {
+        // The explicit ISO form is now a first-class date. A non-ISO
+        // day-month-year string still stays ordinary title text rather than
+        // having its "05-10" misread as a time range.
         val p1 = parse("review 2026-07-15")
         assertFalse(p1.isEvent)
-        assertEquals("review 2026-07-15", p1.title)
+        assertEquals("review", p1.title)
+        assertEquals(LocalDate.of(2026, 7, 15), p1.date)
         val p2 = parse("ship 05-10-2026")
         assertFalse(p2.isEvent)
         assertEquals("ship 05-10-2026", p2.title)
@@ -356,5 +359,71 @@ class QuickParseTest {
         assertEquals("meet bob", p.title)
         assertEquals("15:00", p.start)
         assertEquals(1, p.priority)
+    }
+
+    // --- Relative offsets, recurrence and category tags ---
+
+    @Test
+    fun `in two days creates the expected due date`() {
+        val p = parse("send report in 2 days")
+        assertEquals("send report", p.title)
+        assertEquals(LocalDate.of(2026, 7, 6), p.date)
+        assertFalse(p.isEvent)
+    }
+
+    @Test
+    fun `in three weeks combines with an event time`() {
+        val p = parse("follow up in 3 weeks at 14:30")
+        assertEquals("follow up", p.title)
+        assertEquals(LocalDate.of(2026, 7, 25), p.date)
+        assertEquals("14:30", p.start)
+    }
+
+    @Test
+    fun `weekly recurring event is parsed and stripped`() {
+        val p = parse("standup every week mon 9am")
+        assertEquals("standup", p.title)
+        assertEquals(Recur.WEEKLY, p.recur)
+        assertEquals(LocalDate.of(2026, 7, 6), p.date)
+        assertEquals("09:00", p.start)
+    }
+
+    @Test
+    fun `monthly recurring task can remain undated`() {
+        val p = parse("review budget every month")
+        assertEquals("review budget", p.title)
+        assertEquals(Recur.MONTHLY, p.recur)
+        assertNull(p.date)
+        assertFalse(p.isEvent)
+    }
+
+    @Test
+    fun `default category hashtag maps by label`() {
+        val p = parse("gym tomorrow #fitness")
+        assertEquals("gym", p.title)
+        assertEquals("fitness", p.categoryId)
+    }
+
+    @Test
+    fun `custom category hashtag ignores spaces and case`() {
+        val categories = listOf(Category("deep-work-id", "Deep Work", "#123456"))
+        val p = parseQuickAdd("plan launch #DeepWork", today, categories = categories)!!
+        assertEquals("plan launch", p.title)
+        assertEquals("deep-work-id", p.categoryId)
+    }
+
+    @Test
+    fun `category id itself can be used as a hashtag`() {
+        val categories = listOf(Category("client_alpha", "Client A", "#123456"))
+        val p = parseQuickAdd("send update #client_alpha", today, categories = categories)!!
+        assertEquals("send update", p.title)
+        assertEquals("client_alpha", p.categoryId)
+    }
+
+    @Test
+    fun `unknown hashtag remains in the task title`() {
+        val p = parse("research #later")
+        assertEquals("research #later", p.title)
+        assertNull(p.categoryId)
     }
 }

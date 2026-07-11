@@ -202,6 +202,42 @@ END:VEVENT""",
     }
 
     @Test
+    fun `modified and cancelled recurring instances become exceptions without duplicates`() {
+        val text = calendar(
+            """BEGIN:VEVENT
+UID:series@example.com
+DTSTART:20260706T090000
+DTEND:20260706T100000
+SUMMARY:Weekly planning
+RRULE:FREQ=WEEKLY;BYDAY=MO
+END:VEVENT
+BEGIN:VEVENT
+UID:series@example.com
+RECURRENCE-ID:20260713T090000
+DTSTART:20260713T110000
+DTEND:20260713T120000
+SUMMARY:Weekly planning — moved
+END:VEVENT
+BEGIN:VEVENT
+UID:series@example.com
+RECURRENCE-ID:20260720T090000
+STATUS:CANCELLED
+END:VEVENT""",
+        )
+        val result = importEventsFromIcs(text, Cats.DEFAULTS, localZone = ZoneOffset.UTC)
+        assertEquals(3, result.sourceEvents)
+        assertEquals(0, result.skipped)
+        assertEquals(2, result.events.size)
+
+        val series = result.events.single { it.recur == Recur.WEEKLY }
+        assertEquals(listOf("2026-07-13", "2026-07-20"), series.exDates)
+        val moved = result.events.single { it.recur == Recur.NONE }
+        assertEquals("Weekly planning — moved", moved.title)
+        assertEquals("2026-07-13", moved.date)
+        assertEquals("11:00", moved.start)
+    }
+
+    @Test
     fun `plain text is not accepted as a calendar`() {
         val result = importEventsFromIcs("hello", Cats.DEFAULTS)
         assertFalse(result.validCalendar)

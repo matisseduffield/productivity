@@ -41,6 +41,15 @@ data class ChangelogEntry(val version: String, val date: String, val changes: Li
 
 val CHANGELOG = listOf(
     ChangelogEntry(
+        "2.6.0", "July 2026",
+        listOf(
+            "Quick Add understands ISO dates and offsets like “2026-07-15” and “in 2 days”",
+            "Create repeating events or tasks in one line with “every day”, “every week” or “every month”",
+            "Add categories while typing — #work, #fitness or your own category name",
+            "Imported Google/Outlook series now handle moved and cancelled occurrences without duplicates",
+        ),
+    ),
+    ChangelogEntry(
         "2.5.0", "July 2026",
         listOf(
             "Calendar files: export your Bento events as .ics for Google Calendar, Outlook and more",

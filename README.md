@@ -13,6 +13,7 @@ implementation map).
 - Universal search, dark/light theme, 4 accent colors, 24h/12h time, week-start setting
 - Real system reminders: exact alarms + notifications, reboot/clock-change/permission-change recovery
 - Calendar interoperability: merge or export standard `.ics` event files
+- Smart Quick Add: dates, time ranges, relative offsets, recurrence, priorities and #categories
 - Widgets, biometric app/note unlock, recurring tasks, custom categories, soft-delete trash
 - All data on-device (atomic JSON via DataStore, file `bento.calendar.v1.json`)
 

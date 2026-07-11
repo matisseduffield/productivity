@@ -734,13 +734,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- Natural-language quick add ----
     /**
-     * "Dentist tue 3pm" → event; "Buy milk fri" → dated task; bare text →
-     * undated task. Returns false when nothing parseable was typed. The
-     * live-preview chips call [parseQuickAdd] directly; this is the commit.
+     * "Dentist tue 3pm" → event; "Gym in 2 days #fitness" → categorized
+     * task; "Standup every week mon 9am" → recurring event. Bare text becomes
+     * an undated task. The live-preview chips call [parseQuickAdd] directly;
+     * this is the matching commit path.
      */
     fun commitQuickAdd(raw: String): Boolean {
         val pf = prefs()
-        val p = parseQuickAdd(raw, today(), pf.durDef) ?: return false
+        val snapshot = data.value
+        val p = parseQuickAdd(
+            raw = raw,
+            today = today(),
+            defaultDurMin = pf.durDef,
+            categories = snapshot?.categories ?: Cats.DEFAULTS,
+        ) ?: return false
         if (p.start != null) {
             val ev = EventItem(
                 id = newId(),
@@ -750,7 +757,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 end = p.end!!,
                 // categoryOf: "personal" may have been deleted from the
                 // user's categories — never mint a dangling id.
-                cat = data.value?.categoryOf(Cats.PERSONAL)?.id ?: Cats.PERSONAL,
+                cat = p.categoryId
+                    ?: snapshot?.categoryOf(Cats.PERSONAL)?.id
+                    ?: Cats.PERSONAL,
+                recur = p.recur,
                 remind = pf.remindDef,
             )
             mut { x -> x.copy(events = x.events + ev) }
@@ -759,6 +769,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 id = newId(),
                 title = p.title,
                 due = p.date?.toIso(),
+                cat = p.categoryId.orEmpty(),
+                recur = p.recur,
                 priority = p.priority,
             )
             mut { x -> x.copy(tasks = x.tasks + tk) }

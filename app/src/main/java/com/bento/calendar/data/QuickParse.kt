@@ -5,10 +5,10 @@ import java.time.LocalDate
 import java.time.temporal.TemporalAdjusters
 
 /**
- * Natural-language quick add: "Dentist tuesday 3pm", "Gym tomorrow 7am for
- * 45min", "Standup mon 9-9:30am", "Buy milk fri". A time makes it an event;
- * date-only (or bare text) makes it a task. Recognized tokens are stripped
- * from the title.
+ * Natural-language quick add: "Dentist tuesday 3pm", "Gym in 2 days #fitness",
+ * "Standup every week mon 9-9:30am", "Buy milk 2026-07-15". A time makes it
+ * an event; date-only (or bare text) makes it a task. Recognized tokens are
+ * stripped from the title.
  */
 data class QuickParsed(
     val title: String,
@@ -20,6 +20,10 @@ data class QuickParsed(
     val end: String?,
     /** [Priority] from a "!high"/"!med"/"!low" token; tasks only. */
     val priority: Int = 0,
+    /** Simple recurrence requested with "every day/week/month". */
+    val recur: String = Recur.NONE,
+    /** Matched category id from a #category token, or null for the default. */
+    val categoryId: String? = null,
 ) {
     val isEvent: Boolean get() = start != null
 }
@@ -35,6 +39,23 @@ private fun priorityOf(token: String): Int = when (token.lowercase()) {
     "medium", "med", "m", "2" -> 2
     else -> 1
 }
+
+private val RECURRENCE_RE = Regex(
+    """\b(?:every|repeat)\s+(day|daily|week|weekly|month|monthly)\b""",
+    RegexOption.IGNORE_CASE,
+)
+
+private fun recurrenceOf(token: String): String = when (token.lowercase()) {
+    "day", "daily" -> Recur.DAILY
+    "week", "weekly" -> Recur.WEEKLY
+    else -> Recur.MONTHLY
+}
+
+// Category labels are compared without spaces/punctuation: a custom
+// "Deep Work" category is addressable as #deepwork (or by its id).
+private val CATEGORY_RE = Regex("""(?:^|\s)#([\p{L}\p{N}_-]+)\b""")
+private fun categoryKey(value: String): String =
+    value.lowercase().filter { it.isLetterOrDigit() }
 
 private val WEEKDAYS = mapOf(
     "monday" to DayOfWeek.MONDAY, "mon" to DayOfWeek.MONDAY,
@@ -155,6 +176,13 @@ private val MONTH_DAY_RE = Regex(
 // "15/7" or "15/07/2026" (day first, matching the app's non-US formats).
 private val SLASH_DATE_RE = Regex("""\b(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b""")
 
+private val ISO_DATE_RE = Regex("""\b(\d{4})-(\d{2})-(\d{2})\b""")
+
+private val OFFSET_DATE_RE = Regex(
+    """\bin\s+(\d{1,3})\s+(day|days|week|weeks)\b""",
+    RegexOption.IGNORE_CASE,
+)
+
 private val RELATIVE_RE = Regex(
     """\b(today|tod|tomorrow|tmrw|tmr|tonight|next\s+week)\b""",
     RegexOption.IGNORE_CASE,
@@ -171,7 +199,12 @@ private val NEXT_WEEKDAY_RE = Regex(
  * to [today] when a time is given without a date; an explicit range
  * ("3pm-5pm") fixes both ends instead.
  */
-fun parseQuickAdd(raw: String, today: LocalDate, defaultDurMin: Int = 60): QuickParsed? {
+fun parseQuickAdd(
+    raw: String,
+    today: LocalDate,
+    defaultDurMin: Int = 60,
+    categories: List<Category> = Cats.DEFAULTS,
+): QuickParsed? {
     if (raw.isBlank()) return null
     var text = " ${raw.trim()} "
     var date: LocalDate? = null
@@ -179,10 +212,30 @@ fun parseQuickAdd(raw: String, today: LocalDate, defaultDurMin: Int = 60): Quick
     var endMin: Int? = null
     var durMin: Int? = null
     var priority = 0
+    var recur = Recur.NONE
+    var categoryId: String? = null
 
     PRIORITY_RE.find(text)?.let { m ->
         priority = priorityOf(m.groupValues[1])
         text = text.removeRange(m.range)
+    }
+
+    RECURRENCE_RE.find(text)?.let { m ->
+        recur = recurrenceOf(m.groupValues[1])
+        text = text.removeRange(m.range)
+    }
+
+    CATEGORY_RE.find(text)?.let { m ->
+        val wanted = categoryKey(m.groupValues[1])
+        val match = categories.firstOrNull {
+            categoryKey(it.id) == wanted || categoryKey(it.label) == wanted
+        }
+        // Unknown hashtags are ordinary title text; never silently discard a
+        // tag merely because the user has not created that category yet.
+        if (match != null) {
+            categoryId = match.id
+            text = text.removeRange(m.range)
+        }
     }
 
     // Time range before the duration and single-time passes: "3pm-5pm" would
@@ -253,12 +306,30 @@ fun parseQuickAdd(raw: String, today: LocalDate, defaultDurMin: Int = 60): Quick
         }
     }
 
+    ISO_DATE_RE.find(text)?.let { m ->
+        val parsed = runCatching { LocalDate.parse(m.value) }.getOrNull()
+        if (parsed != null) {
+            date = parsed
+            text = text.removeRange(m.range)
+        }
+    }
+
+    if (date == null) OFFSET_DATE_RE.find(text)?.let { m ->
+        val amount = m.groupValues[1].toLongOrNull() ?: return@let
+        date = if (m.groupValues[2].startsWith("week", ignoreCase = true)) {
+            today.plusWeeks(amount)
+        } else {
+            today.plusDays(amount)
+        }
+        text = text.removeRange(m.range)
+    }
+
     // "tue next week": the "next week" match alone would date this to
     // today+7 and leave "tue" dangling in the title — remember it so the
     // weekday scan below can still claim the weekday ("tue next week" ≡
     // "next tue").
     var fromNextWeek = false
-    RELATIVE_RE.find(text)?.let { m ->
+    if (date == null) RELATIVE_RE.find(text)?.let { m ->
         val word = m.groupValues[1].lowercase().replace(Regex("""\s+"""), " ")
         date = when (word) {
             "today", "tod" -> today
@@ -354,5 +425,7 @@ fun parseQuickAdd(raw: String, today: LocalDate, defaultDurMin: Int = 60): Quick
         start = start?.let(::minsToHm),
         end = end?.let(::minsToHm),
         priority = priority,
+        recur = recur,
+        categoryId = categoryId,
     )
 }

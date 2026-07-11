@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -32,7 +33,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.bento.calendar.data.Cats
 import com.bento.calendar.data.Priority
+import com.bento.calendar.data.Recur
 import com.bento.calendar.data.parseQuickAdd
 import com.bento.calendar.ui.AppViewModel
 import com.bento.calendar.ui.Fmt
@@ -70,8 +73,8 @@ fun CreateSheet(vm: AppViewModel) {
 }
 
 /**
- * Natural-language quick add: "Dentist tue 3pm" → event, "Buy milk fri" →
- * dated task, bare text → undated task. Chips live-preview what
+ * Natural-language quick add: "Dentist tue 3pm" → event, "Gym in 2 days
+ * #fitness" → categorized task, "every week" → recurrence. Chips preview what
  * [parseQuickAdd] will create; Done on the keyboard or the blue (+) commits
  * via [AppViewModel.commitQuickAdd] (which closes the sheet).
  */
@@ -98,7 +101,7 @@ private fun QuickAdd(vm: AppViewModel) {
                 value = text,
                 onValueChange = { text = it },
                 modifier = Modifier.weight(1f).focusRequester(fieldFocus),
-                placeholder = "Quick add — try “Dentist tue 3pm”",
+                placeholder = "Try “Gym in 2 days #fitness”",
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { commit() }),
             )
@@ -106,12 +109,18 @@ private fun QuickAdd(vm: AppViewModel) {
                 Icon(BentoIcons.Plus, "Add", tint = Color.White, modifier = Modifier.size(18.dp))
             }
         }
-        val parsed = parseQuickAdd(text, today, data?.prefs?.durDef ?: 60)
+        val parsed = parseQuickAdd(
+            raw = text,
+            today = today,
+            defaultDurMin = data?.prefs?.durDef ?: 60,
+            categories = data?.categories ?: Cats.DEFAULTS,
+        )
         if (parsed != null) {
             val use24h = data?.prefs?.use24h ?: true
-            Row(
+            FlowRow(
                 Modifier.padding(top = 7.dp),
                 horizontalArrangement = Arrangement.spacedBy(7.dp),
+                verticalArrangement = Arrangement.spacedBy(7.dp),
             ) {
                 PreviewChip(if (parsed.isEvent) "Event" else "Task", accent = true)
                 // A time without a date parses with date = null; the commit
@@ -121,6 +130,20 @@ private fun QuickAdd(vm: AppViewModel) {
                 PreviewChip(date?.let { dateChipLabel(it, today) } ?: "Someday")
                 if (parsed.isEvent) {
                     PreviewChip("${Fmt.time(parsed.start!!, use24h)}–${Fmt.time(parsed.end!!, use24h)}")
+                }
+                if (parsed.recur != Recur.NONE) {
+                    PreviewChip(
+                        when (parsed.recur) {
+                            Recur.DAILY -> "Daily"
+                            Recur.WEEKLY -> "Weekly"
+                            else -> "Monthly"
+                        },
+                    )
+                }
+                parsed.categoryId?.let { id ->
+                    data?.categories?.firstOrNull { it.id == id }?.let { category ->
+                        PreviewChip(category.label, dot = hexColor(category.colorHex))
+                    }
                 }
                 // Priority only persists on tasks (events have no priority
                 // field) — previewing it on an event would promise a flag

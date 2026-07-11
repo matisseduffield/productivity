@@ -34,6 +34,13 @@ private data class IcsStamp(
     val allDay: Boolean get() = time == null
 }
 
+private data class DecodedIcsBlock(
+    val event: EventItem?,
+    val uid: String,
+    val recurrenceDate: LocalDate?,
+    val cancelled: Boolean,
+)
+
 private val DATE_FMT = DateTimeFormatter.BASIC_ISO_DATE
 private val DATE_TIME_SECONDS = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss", Locale.ROOT)
 private val DATE_TIME_MINUTES = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmm", Locale.ROOT)
@@ -148,16 +155,58 @@ fun importEventsFromIcs(
         }
     }
 
+    val decoded = blocks.map { block ->
+        val properties = block.mapNotNull(::parseProperty)
+        val uid = properties.firstOrNull { it.name == "UID" }
+            ?.value?.let(::unescapeIcsText).orEmpty()
+        val recurrenceDate = properties.firstOrNull { it.name == "RECURRENCE-ID" }
+            ?.let { parseStamp(it, localZone) }?.date
+        val cancelled = properties.firstOrNull { it.name == "STATUS" }
+            ?.value.equals("CANCELLED", ignoreCase = true)
+        val event = if (cancelled) null else {
+            runCatching { decodeEvent(properties, categories, localZone, block) }.getOrNull()
+        }
+        DecodedIcsBlock(event, uid, recurrenceDate, cancelled)
+    }
+
+    // Google Calendar and Outlook represent a changed/cancelled occurrence as
+    // another VEVENT with the same UID plus RECURRENCE-ID. Bento represents
+    // that shape as an exDate on the series and (for a change) a standalone
+    // event. Apply the exDates before deduping the decoded list.
+    val baseUids = decoded.filter {
+        it.uid.isNotBlank() && it.recurrenceDate == null &&
+            it.event?.recur?.let { recur -> recur != Recur.NONE } == true
+    }.mapTo(mutableSetOf()) { it.uid }
+    val overridesByUid = decoded.filter {
+        it.uid in baseUids && it.recurrenceDate != null && (it.cancelled || it.event != null)
+    }.groupBy { it.uid }
+
     val imported = mutableListOf<EventItem>()
     val seen = existingIds.toMutableSet()
     var duplicates = 0
     var skipped = 0
-    for (block in blocks) {
-        val properties = block.mapNotNull(::parseProperty)
-        val event = runCatching { decodeEvent(properties, categories, localZone, block) }.getOrNull()
+    for (item in decoded) {
+        if (item.cancelled) {
+            // A cancellation is meaningful only when its base series is in
+            // this import. It contributes an exDate but no standalone event.
+            if (item.uid !in baseUids || item.recurrenceDate == null) skipped++
+            continue
+        }
+        var event = item.event
         if (event == null) {
             skipped++
-        } else if (!seen.add(event.id)) {
+            continue
+        }
+        if (item.recurrenceDate == null && event.recur != Recur.NONE) {
+            val overrideDates = overridesByUid[item.uid].orEmpty()
+                .mapNotNull { it.recurrenceDate?.toIso() }
+            event = event.copy(exDates = (event.exDates + overrideDates).distinct().sorted())
+        } else if (item.recurrenceDate != null) {
+            // The override's DTSTART may intentionally move it to another
+            // day/time; keep that concrete value as a standalone event.
+            event = event.copy(recur = Recur.NONE, exDates = emptyList())
+        }
+        if (!seen.add(event.id)) {
             duplicates++
         } else {
             imported += event
@@ -180,7 +229,6 @@ private fun decodeEvent(
     rawBlock: List<String>,
 ): EventItem? {
     fun first(name: String) = properties.firstOrNull { it.name == name }
-    if (first("STATUS")?.value.equals("CANCELLED", ignoreCase = true)) return null
 
     val startProp = first("DTSTART") ?: return null
     val start = parseStamp(startProp, localZone) ?: return null
