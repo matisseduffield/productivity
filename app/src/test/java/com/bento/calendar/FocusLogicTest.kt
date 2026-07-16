@@ -4,6 +4,8 @@ import com.bento.calendar.data.AppData
 import com.bento.calendar.data.FocusOutcome
 import com.bento.calendar.data.FocusSession
 import com.bento.calendar.data.TaskItem
+import com.bento.calendar.data.TaskBlock
+import com.bento.calendar.data.BlockState
 import com.bento.calendar.data.activeFocus
 import com.bento.calendar.data.extendFocus
 import com.bento.calendar.data.finishFocus
@@ -41,6 +43,22 @@ class FocusLogicTest {
         assertNull(activeFocus(done))
         assertEquals(FocusOutcome.FINISHED, done.focusSessions.single().outcome)
         assertEquals(30, done.focusSessions.single().activeSeconds)
+    }
+
+    @Test fun `finishing a full block records actual minutes and completes it`() {
+        val block = TaskBlock("b", "t", date = "2026-07-13", startMin = 540, durationMin = 30)
+        val started = startFocus(base.copy(taskBlocks = listOf(block)), "t", "b", 1_000L, 1_800L)
+        val done = finishFocus(started, 1_801_000L)
+        assertEquals(30, done.taskBlocks.single().actualMinutes)
+        assertEquals(BlockState.COMPLETED, done.taskBlocks.single().state)
+    }
+
+    @Test fun `ending a partial block preserves it for another focus session`() {
+        val block = TaskBlock("b", "t", date = "2026-07-13", startMin = 540, durationMin = 30)
+        val started = startFocus(base.copy(taskBlocks = listOf(block)), "t", "b", 1_000L, 1_800L)
+        val stopped = finishFocus(started, 601_000L)
+        assertEquals(10, stopped.taskBlocks.single().actualMinutes)
+        assertEquals(BlockState.PLANNED, stopped.taskBlocks.single().state)
     }
 
     @Test fun `extend adds fifteen minutes by default`() {

@@ -41,6 +41,16 @@ data class ChangelogEntry(val version: String, val date: String, val changes: Li
 
 val CHANGELOG = listOf(
     ChangelogEntry(
+        "3.1.0", "July 2026",
+        listOf(
+            "Smart replan rebuilds only future auto-suggestions while preserving manual, completed and past blocks",
+            "Planning later today starts at the next real 15-minute slot and missed blocks get an explicit Later decision",
+            "Focus sessions now record actual minutes against each block and partial sessions can continue later",
+            "New private Insights screen compares planned and focused time, follow-through, streaks and category trends",
+            "Daily Plan widget shows progress, remaining work, partial focus time and one-tap block completion",
+        ),
+    ),
+    ChangelogEntry(
         "3.0.0", "July 2026",
         listOf(
             "Daily planning: choose important work and let Bento propose a realistic schedule around your events",

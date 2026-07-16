@@ -62,9 +62,11 @@ fun suggestDayPlan(
     calendarBusy: List<BusyInterval>,
     workHours: WorkHours,
     defaultEstimateMin: Int = 30,
+    notBeforeMin: Int? = null,
 ): PlanResult {
     if (!workHours.enabled) return PlanResult(emptyList(), tasks.associate { it.id to estimateOf(it, defaultEstimateMin) }, 0, tasks.sumOf { estimateOf(it, defaultEstimateMin) })
-    val workStart = alignUp(workHours.start.toMins().coerceIn(0, 1439))
+    val configuredStart = workHours.start.toMins().coerceIn(0, 1439)
+    val workStart = alignUp(maxOf(configuredStart, notBeforeMin ?: configuredStart).coerceIn(0, 1439))
     val workEnd = alignDown(workHours.end.toMins().coerceIn(1, 1440))
     if (workEnd <= workStart) return PlanResult(emptyList(), tasks.associate { it.id to estimateOf(it, defaultEstimateMin) }, 0, tasks.sumOf { estimateOf(it, defaultEstimateMin) })
 
@@ -101,7 +103,14 @@ fun suggestDayPlan(
     tasks.forEach { task ->
         val estimate = estimateOf(task, defaultEstimateMin)
         val alreadyAllocated = existingBlocks
-            .filter { it.taskId == task.id && it.state == BlockState.PLANNED }
+            .filter { block ->
+                block.taskId == task.id && block.state == BlockState.PLANNED &&
+                    (block.date > dateIso || (
+                        block.date == dateIso &&
+                            (notBeforeMin == null || block.startMin + block.durationMin > notBeforeMin)
+                        )) &&
+                    (task.recur == Recur.NONE || block.occurrenceKey == task.due)
+            }
             .sumOf { it.durationMin }
         var remaining = (estimate - alreadyAllocated).coerceAtLeast(0)
         requested += remaining

@@ -15,6 +15,7 @@ import com.bento.calendar.MainActivity
 import com.bento.calendar.R
 import com.bento.calendar.data.AppData
 import com.bento.calendar.data.AppGraph
+import com.bento.calendar.data.BlockState
 import com.bento.calendar.data.FocusOutcome
 import com.bento.calendar.data.activeFocus
 import com.bento.calendar.data.extendFocus
@@ -158,8 +159,10 @@ class FocusTimerReceiver : BroadcastReceiver() {
                         val blockId = intent.getStringExtra(FocusTimer.EXTRA_BLOCK_ID)
                         repo.update { current ->
                             val block = current.taskBlocks.firstOrNull { it.id == blockId }
-                            if (taskId == null || block == null) current else com.bento.calendar.data.startFocus(
-                                current, taskId, blockId, now, block.durationMin * 60L, elapsedNow,
+                            if (taskId == null || block == null || block.state != BlockState.PLANNED) current else com.bento.calendar.data.startFocus(
+                                current, taskId, blockId, now,
+                                (block.durationMin - (block.actualMinutes ?: 0)).coerceAtLeast(1) * 60L,
+                                elapsedNow,
                             )
                         }
                     }

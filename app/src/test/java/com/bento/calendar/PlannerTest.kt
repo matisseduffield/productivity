@@ -40,6 +40,48 @@ class PlannerTest {
         assertEquals(615, result.suggestions.single().startMin)
     }
 
+    @Test fun `same day replanning never proposes a block before now`() {
+        val task = TaskItem("t", "Task", estimateMin = 45)
+        val result = suggestDayPlan(
+            day, listOf(task), emptyList(), emptyList(), hours, notBeforeMin = 623,
+        )
+        assertEquals(630, result.suggestions.single().startMin)
+    }
+
+    @Test fun `expired planned blocks no longer consume a task estimate`() {
+        val expired = TaskBlock("old", "t", date = day.minusDays(1).toString(), startMin = 540, durationMin = 60)
+        val result = suggestDayPlan(
+            day, listOf(TaskItem("t", "Task", estimateMin = 60)), listOf(expired), emptyList(), hours,
+        )
+        assertEquals(60, result.suggestions.sumOf { it.durationMin })
+    }
+
+    @Test fun `missed blocks earlier today do not consume a replan estimate`() {
+        val missed = TaskBlock("old", "t", date = day.toString(), startMin = 540, durationMin = 30)
+        val result = suggestDayPlan(
+            day, listOf(TaskItem("t", "Task", estimateMin = 30)), listOf(missed), emptyList(), hours,
+            notBeforeMin = 600,
+        )
+        assertEquals(600, result.suggestions.single().startMin)
+    }
+
+    @Test fun `future planned blocks still prevent over allocating an estimate`() {
+        val future = TaskBlock("future", "t", date = day.plusDays(1).toString(), startMin = 540, durationMin = 45)
+        val result = suggestDayPlan(
+            day, listOf(TaskItem("t", "Task", estimateMin = 60)), listOf(future), emptyList(), hours,
+        )
+        assertEquals(15, result.suggestions.sumOf { it.durationMin })
+    }
+
+    @Test fun `another recurring cycle does not consume this cycles estimate`() {
+        val task = TaskItem("t", "Weekly", due = day.toString(), recur = Recur.WEEKLY, estimateMin = 30)
+        val nextCycle = TaskBlock(
+            "next", "t", day.plusWeeks(1).toString(), day.plusWeeks(1).toString(), 540, 30,
+        )
+        val result = suggestDayPlan(day, listOf(task), listOf(nextCycle), emptyList(), hours)
+        assertEquals(30, result.suggestions.sumOf { it.durationMin })
+    }
+
     @Test fun `overload remains visible rather than spilling days`() {
         val task = TaskItem("t", "Large", estimateMin = 600)
         val result = suggestDayPlan(day, listOf(task), emptyList(), emptyList(), hours)

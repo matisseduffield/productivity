@@ -1,5 +1,6 @@
 package com.bento.calendar.ui.today
 
+import android.os.SystemClock
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -56,6 +57,7 @@ import com.bento.calendar.data.BusyInterval
 import com.bento.calendar.data.suggestDayPlan
 import com.bento.calendar.data.TaskItem
 import com.bento.calendar.data.occurrencesOn
+import com.bento.calendar.data.productivityInsights
 import com.bento.calendar.data.toIso
 import com.bento.calendar.data.toMins
 import com.bento.calendar.ui.AppViewModel
@@ -206,7 +208,13 @@ private fun TodayBody(
                 AllDayPillRow(vm, allDayT)
             }
 
-            val expiredBlocks = data.taskBlocks.filter { it.date < today.toIso() && it.state == BlockState.PLANNED }
+            val activeBlockId = vm.activeFocusSession()?.blockId
+            val expiredBlocks = data.taskBlocks.filter { block ->
+                block.state == BlockState.PLANNED && block.id != activeBlockId && (
+                    block.date < today.toIso() ||
+                        (block.date == today.toIso() && block.startMin + block.durationMin <= nowMin)
+                    )
+            }
             if (expiredBlocks.isNotEmpty()) RolloverReviewCard(vm, data, expiredBlocks)
             if (vm.activeFocusSession() != null) ActiveFocusCard(vm)
             DailyPlanCard(vm, data, today, use24h)
@@ -214,7 +222,7 @@ private fun TodayBody(
                 PlanningBuilder(vm, data, use24h)
             }
             if (data.focusSessions.isNotEmpty() || data.taskBlocks.any { it.state == BlockState.COMPLETED }) {
-                ReviewInsightsCard(data, today)
+                ReviewInsightsCard(vm, data, today)
             }
 
             // Bento grid (.bgrid): 2 columns, 10dp gap, 14dp top margin.
@@ -245,22 +253,26 @@ private fun TodayBody(
 }
 
 @Composable
-private fun ReviewInsightsCard(data: AppData, today: LocalDate) {
+private fun ReviewInsightsCard(vm: AppViewModel, data: AppData, today: LocalDate) {
     val c = LocalBento.current
-    val zone = java.time.ZoneId.systemDefault()
-    fun sessionDate(epoch: Long): LocalDate = java.time.Instant.ofEpochMilli(epoch).atZone(zone).toLocalDate()
-    val todaySessions = data.focusSessions.filter { sessionDate(it.startedAt) == today }
-    val weekSessions = data.focusSessions.filter { sessionDate(it.startedAt) in today.minusDays(6)..today }
-    val actualToday = todaySessions.sumOf { it.activeSeconds } / 60
-    val actualWeek = weekSessions.sumOf { it.activeSeconds } / 60
-    val plannedToday = data.taskBlocks.filter { it.date == today.toIso() }.sumOf { it.durationMin }
-    val completedToday = data.taskBlocks.count { it.date == today.toIso() && it.state == BlockState.COMPLETED }
-    Tile(Modifier.fillMaxWidth()) {
-        Eyebrow("REVIEW", c.sub)
+    val insights = productivityInsights(
+        data, today, 7,
+        nowMillis = System.currentTimeMillis(),
+        elapsedNow = SystemClock.elapsedRealtime(),
+    )
+    val actualToday = insights.days.last().focusedMinutes
+    val plannedToday = insights.days.last().plannedMinutes
+    val completedToday = insights.days.last().completedBlocks
+    Tile(Modifier.fillMaxWidth().tap { vm.openInsights() }) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Eyebrow("REVIEW", c.sub)
+            Spacer(Modifier.weight(1f))
+            Text("View insights", fontSize = 9.5.sp, fontWeight = FontWeight.W700, color = c.acc)
+        }
         Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             ReviewMetric("Today", "${actualToday}m", "of ${plannedToday}m planned", Modifier.weight(1f))
             ReviewMetric("Completed", completedToday.toString(), "planned blocks", Modifier.weight(1f))
-            ReviewMetric("7 days", "${actualWeek / 60}h ${actualWeek % 60}m", "focused", Modifier.weight(1f))
+            ReviewMetric("7 days", "${insights.totalFocusedMinutes / 60}h ${insights.totalFocusedMinutes % 60}m", "focused", Modifier.weight(1f))
         }
     }
 }
@@ -294,8 +306,13 @@ private fun RolloverReviewCard(vm: AppViewModel, data: AppData, blocks: List<Tas
             Column(Modifier.fillMaxWidth().padding(top = 10.dp)) {
                 Text(task?.title ?: "Deleted task", fontSize = 12.5.sp, fontWeight = FontWeight.W600, color = c.tx)
                 Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    ReviewAction("Tomorrow") { vm.reviewExpiredBlock(block.id, "tomorrow") }
-                    ReviewAction("Backlog") { vm.reviewExpiredBlock(block.id, "backlog") }
+                    if (block.date == LocalDate.now().toIso()) {
+                        ReviewAction("Later") { vm.reviewExpiredBlock(block.id, "later") }
+                        ReviewAction("Tomorrow") { vm.reviewExpiredBlock(block.id, "tomorrow") }
+                    } else {
+                        ReviewAction("Tomorrow") { vm.reviewExpiredBlock(block.id, "tomorrow") }
+                        ReviewAction("Backlog") { vm.reviewExpiredBlock(block.id, "backlog") }
+                    }
                     ReviewAction("Done") { vm.reviewExpiredBlock(block.id, "complete") }
                     ReviewAction("Discard") { vm.reviewExpiredBlock(block.id, "skip") }
                 }
@@ -522,9 +539,18 @@ private fun PlanningBuilder(vm: AppViewModel, data: AppData, use24h: Boolean) {
             .border(1.dp, c.accTint(0.35f), RoundedCornerShape(19.dp))
             .padding(15.dp),
     ) {
-        Text("Choose today’s work", fontSize = 16.sp, fontWeight = FontWeight.W700, color = c.tx)
         Text(
-            "Bento suggests urgent and high-priority tasks. Nothing is scheduled until you confirm.",
+            if (vm.planningReplacesSuggestions) "Replan what remains" else "Choose today’s work",
+            fontSize = 16.sp,
+            fontWeight = FontWeight.W700,
+            color = c.tx,
+        )
+        Text(
+            if (vm.planningReplacesSuggestions) {
+                "Future suggestions will be rebuilt. Manual, completed and past blocks stay exactly where they are."
+            } else {
+                "Bento suggests urgent and high-priority tasks. Nothing is scheduled until you confirm."
+            },
             fontSize = 11.5.sp,
             color = c.sub,
             modifier = Modifier.padding(top = 4.dp),
@@ -607,7 +633,14 @@ private fun PlanningBuilder(vm: AppViewModel, data: AppData, use24h: Boolean) {
                     .background(c.acc, RoundedCornerShape(12.dp))
                     .padding(vertical = 11.dp),
                 contentAlignment = Alignment.Center,
-            ) { Text("Confirm plan", fontSize = 12.sp, fontWeight = FontWeight.W700, color = Color.White) }
+            ) {
+                Text(
+                    if (vm.planningReplacesSuggestions) "Apply replan" else "Confirm plan",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.W700,
+                    color = Color.White,
+                )
+            }
         }
     }
 }

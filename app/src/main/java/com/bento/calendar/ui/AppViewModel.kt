@@ -168,6 +168,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var changelogOpen by mutableStateOf(false)
         private set
+    var insightsOpen by mutableStateOf(false)
+        private set
     var fabOpen by mutableStateOf(false)
         private set
     var openNoteId by mutableStateOf<String?>(null)
@@ -198,6 +200,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var planningResult by mutableStateOf<PlanResult?>(null)
         private set
+    private var planningReplaceBlockIds: Set<String> = emptySet()
+    val planningReplacesSuggestions: Boolean get() = planningReplaceBlockIds.isNotEmpty()
 
     private val armJobs = mutableMapOf<String, Job>()
     private var pinErrJob: Job? = null
@@ -358,9 +362,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         changelogOpen = false
     }
 
+    fun openInsights() {
+        insightsOpen = true
+    }
+
+    fun closeInsights() {
+        insightsOpen = false
+    }
+
     fun closeSheets() {
         settingsOpen = false
         changelogOpen = false
+        insightsOpen = false
         categoriesOpen = false
         fabOpen = false
         evDraft = null
@@ -390,6 +403,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             trashOpen -> trashOpen = false
             categoriesOpen -> categoriesOpen = false
             changelogOpen -> changelogOpen = false
+            insightsOpen -> insightsOpen = false
             settingsOpen -> settingsOpen = false
             planningOpen -> closePlanner()
         }
@@ -398,7 +412,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun hasOverlay(): Boolean =
         pinCtx != null || evDraft != null || tkDraft != null || fabOpen ||
             searchOpen || openNoteId != null || settingsOpen || changelogOpen ||
-            categoriesOpen || trashOpen
+            insightsOpen || categoriesOpen || trashOpen
 
     // ---- Calendar ----
 
@@ -819,7 +833,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val d = data.value ?: return
         planningDate = date
         val unfinished = d.taskBlocks
-            .filter { it.date < date.toIso() && it.state == BlockState.PLANNED }
+            .filter {
+                it.state == BlockState.PLANNED && (
+                    it.date < date.toIso() ||
+                        (it.date == date.toIso() && it.source == BlockSource.SUGGESTED)
+                    )
+            }
             .mapTo(mutableSetOf()) { it.taskId }
         planningTaskIds = planningCandidates(d.tasks, date, unfinished).mapTo(linkedSetOf()) { it.id }
         planningOpen = true
@@ -829,6 +848,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun closePlanner() {
         planningOpen = false
         planningResult = null
+        planningReplaceBlockIds = emptySet()
     }
 
     fun togglePlanningTask(id: String) {
@@ -839,6 +859,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun rebuildPlanPreview() {
         val d = data.value ?: return
         val date = planningDate
+        val nowDateTime = _now.value
+        val notBefore = if (date == nowDateTime.toLocalDate()) {
+            ((nowDateTime.hour * 60 + nowDateTime.minute + 14) / 15 * 15).coerceAtMost(1439)
+        } else null
+        planningReplaceBlockIds = d.taskBlocks
+            .filter { block ->
+                block.date == date.toIso() && block.state == BlockState.PLANNED &&
+                    block.source == BlockSource.SUGGESTED &&
+                    (notBefore == null || block.startMin >= notBefore)
+            }
+            .mapTo(mutableSetOf()) { it.id }
         val tasks = d.tasks.filter { it.id in planningTaskIds && !it.done }
         val timedEvents = occurrencesOn(d.events, date)
             .filterNot { it.allDay }
@@ -851,10 +882,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         planningResult = suggestDayPlan(
             date = date,
             tasks = tasks,
-            existingBlocks = d.taskBlocks,
+            existingBlocks = d.taskBlocks.filterNot { it.id in planningReplaceBlockIds },
             calendarBusy = timedEvents + deviceBusy,
             workHours = hours,
             defaultEstimateMin = d.prefs.defaultTaskEstimateMin,
+            notBeforeMin = notBefore,
         )
     }
 
@@ -887,7 +919,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 plannedAt = now,
             )
             d.copy(
-                taskBlocks = d.taskBlocks + blocks,
+                taskBlocks = d.taskBlocks.filterNot { existing ->
+                    existing.id in planningReplaceBlockIds &&
+                        existing.date == date.toIso() &&
+                        existing.state == BlockState.PLANNED &&
+                        existing.source == BlockSource.SUGGESTED
+                } + blocks,
                 dayPlans = d.dayPlans.filterNot { it.date == plan.date } + plan,
             )
         }
@@ -942,6 +979,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun reviewExpiredBlock(id: String, action: String) {
         val block = data.value?.taskBlocks?.firstOrNull { it.id == id } ?: return
         when (action) {
+            "later" -> {
+                val nowDateTime = _now.value
+                val nextSlot = ((nowDateTime.hour * 60 + nowDateTime.minute + 14) / 15 * 15)
+                if (nextSlot + block.durationMin <= 1440) moveTaskBlock(id, today(), nextSlot)
+                else moveTaskBlock(id, today().plusDays(1), block.startMin)
+            }
             "tomorrow" -> moveTaskBlock(id, today().plusDays(1), block.startMin)
             "complete" -> {
                 val task = data.value?.tasks?.firstOrNull { it.id == block.taskId }
@@ -971,7 +1014,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val task = snapshot.tasks.firstOrNull { it.id == taskId } ?: return
         val block = blockId?.let { id -> snapshot.taskBlocks.firstOrNull { it.id == id } }
         val targetSeconds = (
-            block?.durationMin ?: task.estimateMin ?: snapshot.prefs.defaultTaskEstimateMin
+            block?.let { (it.durationMin - (it.actualMinutes ?: 0)).coerceAtLeast(1) }
+                ?: task.estimateMin ?: snapshot.prefs.defaultTaskEstimateMin
             ) * 60L
         mut {
             com.bento.calendar.data.startFocus(
@@ -2057,6 +2101,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                                     require(block.startMin % 15 == 0 && block.durationMin % 15 == 0)
                                     require(block.startMin + block.durationMin <= 1440)
                                     require(block.state in BlockState.ALL)
+                                    require(block.actualMinutes == null || block.actualMinutes >= 0)
                                 }
                             }
                         }.isSuccess
@@ -2069,7 +2114,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         block.startMin in 0..1425 && block.durationMin in 15..1440 &&
                         block.startMin % 15 == 0 && block.durationMin % 15 == 0 &&
                         block.startMin + block.durationMin <= 1440 && block.state in BlockState.ALL
-                    }?.copy(source = block.source.takeIf { it in BlockSource.ALL } ?: BlockSource.MANUAL)
+                    }?.copy(
+                        source = block.source.takeIf { it in BlockSource.ALL } ?: BlockSource.MANUAL,
+                        actualMinutes = block.actualMinutes?.coerceAtLeast(0),
+                    )
                 },
                 dayPlans = decoded.dayPlans.mapNotNull { plan ->
                     runCatching {

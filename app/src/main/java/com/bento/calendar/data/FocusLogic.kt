@@ -56,13 +56,33 @@ fun resumeFocus(data: AppData, now: Long, elapsedNow: Long = now): AppData = upd
     )
 }
 
-fun finishFocus(data: AppData, now: Long, elapsedNow: Long = now): AppData = updateActiveFocus(data) { session ->
-    session.copy(
-        activeSeconds = focusElapsedSeconds(session, now, elapsedNow),
+fun finishFocus(data: AppData, now: Long, elapsedNow: Long = now): AppData {
+    val active = activeFocus(data) ?: return data
+    val elapsedSeconds = focusElapsedSeconds(active, now, elapsedNow)
+    val focusedMinutes = (elapsedSeconds / 60L).toInt()
+    val finishedSession = active.copy(
+        activeSeconds = elapsedSeconds,
         runningSince = null,
         runningSinceElapsed = null,
         endedAt = now,
         outcome = FocusOutcome.FINISHED,
+    )
+    return data.copy(
+        focusSessions = data.focusSessions.map {
+            if (it.id == active.id) finishedSession else it
+        },
+        taskBlocks = data.taskBlocks.map { block ->
+            if (block.id != active.blockId || focusedMinutes <= 0) block else {
+                val actual = (block.actualMinutes ?: 0) + focusedMinutes
+                block.copy(
+                    actualMinutes = actual,
+                    state = if (actual >= block.durationMin || elapsedSeconds >= active.targetSeconds) {
+                        BlockState.COMPLETED
+                    } else block.state,
+                    updatedAt = now,
+                )
+            }
+        },
     )
 }
 

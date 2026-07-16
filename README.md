@@ -14,7 +14,8 @@ implementation map).
 - Real system reminders: exact alarms + notifications, reboot/clock-change/permission-change recovery
 - Calendar interoperability: merge or export standard `.ics` event files
 - Smart Quick Add: dates, time ranges, task estimates, relative offsets, recurrence, priorities and #categories
-- Multiple work sessions per task, local auto-plan suggestions, working hours and planned-versus-actual review
+- Multiple work sessions per task, future-safe smart replanning, working hours and planned-versus-actual review
+- Private productivity insights: focus trends, follow-through, streaks and category breakdowns
 - Widgets (including Daily Plan), biometric app/note unlock, recurring tasks, custom categories, soft-delete trash
 - All data stays on-device: Room for domain records and DataStore for preferences/security settings
 

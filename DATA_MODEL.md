@@ -56,6 +56,8 @@ or `agenda`) so the user's working view survives a process restart.
 - `TaskBlock` never changes the task deadline. Blocks use 15-minute increments,
   cannot cross midnight and carry a recurring-cycle key when applicable.
 - Suggested blocks remain transient until the user confirms the plan.
+- Replanning may replace only future `suggested` blocks for the target day;
+  manual, completed, skipped and already-past blocks are immutable inputs.
 
 ## Focus invariants
 
@@ -64,6 +66,8 @@ or `agenda`) so the user's working view survives a process restart.
   running anchor; there are no per-second database or widget writes.
 - Expiry never completes a task automatically. Reboot marks a running session
   interrupted because its monotonic interval cannot be reconstructed safely.
+- Finishing a linked focus session accumulates `actualMinutes` on its task block;
+  a partial session leaves the block planned so its remaining time can resume.
 - Detailed sessions older than 365 days compact into daily category totals.
 
 ## Notes and privacy

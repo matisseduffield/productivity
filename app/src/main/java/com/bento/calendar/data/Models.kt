@@ -220,6 +220,8 @@ data class TaskBlock(
     val durationMin: Int,
     val source: String = BlockSource.MANUAL,
     val state: String = BlockState.PLANNED,
+    /** Focused minutes recorded against this block; null means not started. */
+    val actualMinutes: Int? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = createdAt,
 )
