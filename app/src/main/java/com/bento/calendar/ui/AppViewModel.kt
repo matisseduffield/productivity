@@ -170,6 +170,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var insightsOpen by mutableStateOf(false)
         private set
+    var weekPlannerOpen by mutableStateOf(false)
+        private set
+    var weekPlannerAnchor by mutableStateOf(LocalDate.now())
+        private set
     var fabOpen by mutableStateOf(false)
         private set
     var openNoteId by mutableStateOf<String?>(null)
@@ -201,6 +205,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var planningResult by mutableStateOf<PlanResult?>(null)
         private set
     private var planningReplaceBlockIds: Set<String> = emptySet()
+    private var planningReturnToWeek: Boolean = false
     val planningReplacesSuggestions: Boolean get() = planningReplaceBlockIds.isNotEmpty()
 
     private val armJobs = mutableMapOf<String, Job>()
@@ -370,10 +375,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         insightsOpen = false
     }
 
+    fun openWeekPlanner(date: LocalDate = today()) {
+        if (planningOpen) closePlanner()
+        weekPlannerAnchor = startOfWeek(date, prefs().monday)
+        weekPlannerOpen = true
+        ensureDeviceCalendarRange(weekPlannerAnchor, weekPlannerAnchor.plusDays(6))
+    }
+
+    fun closeWeekPlanner() {
+        weekPlannerOpen = false
+    }
+
+    fun shiftWeekPlanner(weeks: Long) {
+        weekPlannerAnchor = weekPlannerAnchor.plusWeeks(weeks)
+        ensureDeviceCalendarRange(weekPlannerAnchor, weekPlannerAnchor.plusDays(6))
+    }
+
+    fun resetWeekPlanner() {
+        weekPlannerAnchor = startOfWeek(today(), prefs().monday)
+        ensureDeviceCalendarRange(weekPlannerAnchor, weekPlannerAnchor.plusDays(6))
+    }
+
+    fun planFromWeek(date: LocalDate) {
+        weekPlannerOpen = false
+        tabState = Tab.Today
+        openPlanner(date)
+        if (planningOpen) planningReturnToWeek = true
+    }
+
     fun closeSheets() {
         settingsOpen = false
         changelogOpen = false
         insightsOpen = false
+        weekPlannerOpen = false
         categoriesOpen = false
         fabOpen = false
         evDraft = null
@@ -381,6 +415,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         pinCtx = null
         planningOpen = false
         planningResult = null
+        planningReturnToWeek = false
         disarm(Arm.EVENT)
         disarm(Arm.TASK)
     }
@@ -404,6 +439,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             categoriesOpen -> categoriesOpen = false
             changelogOpen -> changelogOpen = false
             insightsOpen -> insightsOpen = false
+            weekPlannerOpen -> weekPlannerOpen = false
             settingsOpen -> settingsOpen = false
             planningOpen -> closePlanner()
         }
@@ -412,7 +448,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun hasOverlay(): Boolean =
         pinCtx != null || evDraft != null || tkDraft != null || fabOpen ||
             searchOpen || openNoteId != null || settingsOpen || changelogOpen ||
-            insightsOpen || categoriesOpen || trashOpen
+            insightsOpen || weekPlannerOpen || planningOpen || categoriesOpen || trashOpen
 
     // ---- Calendar ----
 
@@ -830,7 +866,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // ---- Daily planning & internal task blocks ----
 
     fun openPlanner(date: LocalDate = today()) {
+        if (date.isBefore(today())) return
         val d = data.value ?: return
+        planningReturnToWeek = false
         planningDate = date
         val unfinished = d.taskBlocks
             .filter {
@@ -846,9 +884,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun closePlanner() {
+        val returnToWeek = planningReturnToWeek
+        val returnDate = planningDate
         planningOpen = false
         planningResult = null
         planningReplaceBlockIds = emptySet()
+        planningReturnToWeek = false
+        if (returnToWeek) openWeekPlanner(returnDate)
     }
 
     fun togglePlanningTask(id: String) {
@@ -1467,14 +1509,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         mutPrefs { it.copy(deviceCalsEnabled = on) }
-        if (on) refreshDeviceCalendarData() else deviceEvents = emptyMap()
+        if (on) {
+            val anchorFrom = minOf(selDate, cursor.atDay(1))
+            val anchorTo = maxOf(selDate, cursor.atEndOfMonth())
+            loadDeviceCalendarData(anchorFrom, anchorTo, forceEnabled = true)
+        } else {
+            deviceLoadGeneration++
+            deviceEvents = emptyMap()
+            deviceWindow = null
+        }
     }
 
     /** Called by MainActivity with the permission result. */
     fun onCalendarPermissionResult(granted: Boolean) {
         if (granted) {
             mutPrefs { it.copy(deviceCalsEnabled = true) }
-            refreshDeviceCalendarData()
+            val anchorFrom = minOf(selDate, cursor.atDay(1))
+            val anchorTo = maxOf(selDate, cursor.atEndOfMonth())
+            loadDeviceCalendarData(anchorFrom, anchorTo, forceEnabled = true)
         }
     }
 
@@ -1494,6 +1546,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** The date range the current [deviceEvents] map covers (main-thread). */
     private var deviceWindow: Pair<LocalDate, LocalDate>? = null
+    private var deviceLoadGeneration: Long = 0
 
     /**
      * (Re)load the device calendar list and a generous instance window around
@@ -1501,17 +1554,40 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * navigation past the loaded window, and resume; cheap IO queries.
      */
     fun refreshDeviceCalendarData() {
-        val app = getApplication<Application>()
         // Snapshot nav state on the caller's (main) thread: the IO coroutine
         // must not observe positions mutated after this call.
         val anchorFrom = minOf(selDate, cursor.atDay(1))
         val anchorTo = maxOf(selDate, cursor.atEndOfMonth())
+        loadDeviceCalendarData(anchorFrom, anchorTo)
+    }
+
+    /** Ensure non-calendar overlays (such as Plan Ahead) have device events. */
+    fun ensureDeviceCalendarRange(from: LocalDate, to: LocalDate) {
+        if (data.value?.prefs?.deviceCalsEnabled != true) return
+        val loaded = deviceWindow
+        if (loaded == null || from < loaded.first || to > loaded.second) {
+            loadDeviceCalendarData(from, to)
+        }
+    }
+
+    private fun loadDeviceCalendarData(
+        anchorFrom: LocalDate,
+        anchorTo: LocalDate,
+        forceEnabled: Boolean = false,
+    ) {
+        val app = getApplication<Application>()
+        val generation = ++deviceLoadGeneration
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             val pf = data.first { it != null }!!.prefs
-            if (!pf.deviceCalsEnabled || !DeviceCalendars.hasPermission(app)) {
+            // Enabling the overlay and persisting the preference are both
+            // asynchronous. The explicit enable path may query immediately;
+            // generation checks still prevent a quick disable from leaking
+            // the result back into the UI.
+            if ((!pf.deviceCalsEnabled && !forceEnabled) || !DeviceCalendars.hasPermission(app)) {
                 // Disabled — or the permission was revoked in system settings:
                 // stale device events must not keep rendering.
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    if (generation != deviceLoadGeneration) return@withContext
                     deviceEvents = emptyMap()
                     deviceWindow = null
                 }
@@ -1525,6 +1601,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val to = anchorTo.plusMonths(2)
             val events = DeviceCalendars.eventsBetween(app, from, to, pf.deviceCalIds)
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                if (generation != deviceLoadGeneration) return@withContext
                 deviceCals = cals
                 deviceEvents = events
                 deviceWindow = from to to

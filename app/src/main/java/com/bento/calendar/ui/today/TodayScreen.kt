@@ -54,7 +54,7 @@ import com.bento.calendar.data.BlockState
 import com.bento.calendar.data.TaskBlock
 import com.bento.calendar.data.FocusOutcome
 import com.bento.calendar.data.BusyInterval
-import com.bento.calendar.data.suggestDayPlan
+import com.bento.calendar.data.summarizeDayPlan
 import com.bento.calendar.data.TaskItem
 import com.bento.calendar.data.occurrencesOn
 import com.bento.calendar.data.productivityInsights
@@ -218,7 +218,7 @@ private fun TodayBody(
             if (expiredBlocks.isNotEmpty()) RolloverReviewCard(vm, data, expiredBlocks)
             if (vm.activeFocusSession() != null) ActiveFocusCard(vm)
             DailyPlanCard(vm, data, today, use24h)
-            if (vm.planningOpen && vm.planningDate == today) {
+            if (vm.planningOpen) {
                 PlanningBuilder(vm, data, use24h)
             }
             if (data.focusSessions.isNotEmpty() || data.taskBlocks.any { it.state == BlockState.COMPLETED }) {
@@ -406,15 +406,15 @@ private fun DailyPlanCard(vm: AppViewModel, data: AppData, today: LocalDate, use
         .sortedBy { it.startMin }
     val tasks = data.tasks.associateBy { it.id }
     val hours = data.prefs.workHours.firstOrNull { it.day == today.dayOfWeek.value }
-    val capacity = hours?.let { work ->
+    val summary = hours?.let { work ->
         val busy = occurrencesOn(data.events, today).filterNot { it.allDay }
             .map { BusyInterval(it.start.toMins(), it.end.toMins()) } +
             vm.deviceEvents[iso].orEmpty().filterNot { it.allDay }
                 .map { BusyInterval(it.start.toMins(), it.end.toMins()) }
-        suggestDayPlan(today, emptyList(), emptyList(), busy, work, data.prefs.defaultTaskEstimateMin)
-            .availableMinutes
-    } ?: 0
-    val planned = blocks.sumOf { it.durationMin }
+        summarizeDayPlan(today, data.taskBlocks, busy, work)
+    }
+    val capacity = summary?.availableMinutes ?: 0
+    val planned = summary?.plannedMinutes ?: blocks.sumOf { it.durationMin }
     val ratio = if (capacity > 0) (planned.toFloat() / capacity).coerceIn(0f, 1f) else 0f
 
     Column(
@@ -504,21 +504,30 @@ private fun DailyPlanCard(vm: AppViewModel, data: AppData, today: LocalDate, use
                 }
             }
         }
-        Row(
-            Modifier
-                .padding(top = 11.dp)
-                .tap { if (vm.planningOpen) vm.closePlanner() else vm.openPlanner(today) }
-                .background(c.accTint(0.14f), RoundedCornerShape(12.dp))
-                .padding(horizontal = 12.dp, vertical = 9.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(BentoIcons.Timer, null, tint = c.acc, modifier = Modifier.size(14.dp))
+        Row(Modifier.fillMaxWidth().padding(top = 11.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.tap { if (vm.planningOpen) vm.closePlanner() else vm.openPlanner(today) }
+                    .background(c.accTint(0.14f), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 12.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(BentoIcons.Timer, null, tint = c.acc, modifier = Modifier.size(14.dp))
+                Text(
+                    if (vm.planningOpen) "Close planner" else if (blocks.isEmpty()) "Plan my day" else "Adjust plan",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.W700,
+                    color = c.acc,
+                    modifier = Modifier.padding(start = 7.dp),
+                )
+            }
+            Spacer(Modifier.weight(1f))
             Text(
-                if (vm.planningOpen) "Close planner" else if (blocks.isEmpty()) "Plan my day" else "Adjust plan",
-                fontSize = 12.sp,
+                "Plan ahead",
+                fontSize = 11.5.sp,
                 fontWeight = FontWeight.W700,
-                color = c.acc,
-                modifier = Modifier.padding(start = 7.dp),
+                color = c.sub,
+                modifier = Modifier.tap { vm.openWeekPlanner(today) }
+                    .background(c.inp, RoundedCornerShape(12.dp)).padding(horizontal = 11.dp, vertical = 9.dp),
             )
         }
     }
@@ -529,6 +538,13 @@ private fun DailyPlanCard(vm: AppViewModel, data: AppData, today: LocalDate, use
 private fun PlanningBuilder(vm: AppViewModel, data: AppData, use24h: Boolean) {
     val c = LocalBento.current
     val result = vm.planningResult
+    val planDate = vm.planningDate
+    val today = LocalDate.now()
+    val dateLabel = when (planDate) {
+        today -> "today"
+        today.plusDays(1) -> "tomorrow"
+        else -> Fmt.dayShort(planDate)
+    }
     val candidates = data.tasks.filter { !it.done }
     val byId = data.tasks.associateBy { it.id }
     Column(
@@ -540,7 +556,7 @@ private fun PlanningBuilder(vm: AppViewModel, data: AppData, use24h: Boolean) {
             .padding(15.dp),
     ) {
         Text(
-            if (vm.planningReplacesSuggestions) "Replan what remains" else "Choose today’s work",
+            if (vm.planningReplacesSuggestions) "Replan $dateLabel" else "Choose work for $dateLabel",
             fontSize = 16.sp,
             fontWeight = FontWeight.W700,
             color = c.tx,
@@ -607,7 +623,7 @@ private fun PlanningBuilder(vm: AppViewModel, data: AppData, use24h: Boolean) {
             val overflow = result.unscheduledMinutes.values.sum()
             if (overflow > 0) {
                 Text(
-                    "$overflow min won’t fit today and will stay unscheduled.",
+                    "$overflow min won’t fit $dateLabel and will stay unscheduled.",
                     fontSize = 11.sp,
                     color = c.dng,
                     modifier = Modifier.padding(top = 9.dp),

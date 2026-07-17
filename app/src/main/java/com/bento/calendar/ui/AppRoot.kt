@@ -134,6 +134,7 @@ fun AppRoot(
             )
             if (vm.changelogOpen) com.bento.calendar.ui.settings.ChangelogOverlay(vm)
             if (vm.insightsOpen) com.bento.calendar.ui.today.InsightsOverlay(vm, d, now)
+            if (vm.weekPlannerOpen) com.bento.calendar.ui.planning.WeekPlanOverlay(vm, d, now)
             if (vm.categoriesOpen) com.bento.calendar.ui.settings.CategoriesOverlay(vm, d)
             if (vm.trashOpen) com.bento.calendar.ui.settings.TrashOverlay(vm, d)
             if (vm.searchOpen) SearchOverlay(vm, d, now)

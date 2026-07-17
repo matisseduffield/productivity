@@ -22,6 +22,47 @@ data class PlanResult(
     val requestedMinutes: Int,
 )
 
+data class DayPlanningSummary(
+    val date: LocalDate,
+    /** Work time left after timed calendar commitments. */
+    val availableMinutes: Int,
+    val plannedMinutes: Int,
+    val completedMinutes: Int,
+    val skippedMinutes: Int,
+    val completedBlocks: Int,
+    val skippedBlocks: Int,
+    val enabled: Boolean,
+) {
+    val overloadMinutes: Int get() = (plannedMinutes - availableMinutes).coerceAtLeast(0)
+}
+
+/** Shared capacity contract used by Today and the seven-day planning board. */
+fun summarizeDayPlan(
+    date: LocalDate,
+    taskBlocks: List<TaskBlock>,
+    calendarBusy: List<BusyInterval>,
+    workHours: WorkHours,
+): DayPlanningSummary {
+    val blocks = taskBlocks.filter { it.date == date.toIso() }
+    val capacity = suggestDayPlan(
+        date = date,
+        tasks = emptyList(),
+        existingBlocks = emptyList(),
+        calendarBusy = calendarBusy,
+        workHours = workHours,
+    ).availableMinutes
+    return DayPlanningSummary(
+        date = date,
+        availableMinutes = capacity,
+        plannedMinutes = blocks.filter { it.state == BlockState.PLANNED }.sumOf { it.durationMin },
+        completedMinutes = blocks.filter { it.state == BlockState.COMPLETED }.sumOf { it.durationMin },
+        skippedMinutes = blocks.filter { it.state == BlockState.SKIPPED }.sumOf { it.durationMin },
+        completedBlocks = blocks.count { it.state == BlockState.COMPLETED },
+        skippedBlocks = blocks.count { it.state == BlockState.SKIPPED },
+        enabled = workHours.enabled,
+    )
+}
+
 /**
  * Curated, stable shortlist for planning: overdue/due-soon first, then high
  * priority and unfinished work from a prior plan. It never mutates tasks.

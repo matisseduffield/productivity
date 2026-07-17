@@ -41,6 +41,16 @@ data class ChangelogEntry(val version: String, val date: String, val changes: Li
 
 val CHANGELOG = listOf(
     ChangelogEntry(
+        "3.2.0", "July 2026",
+        listOf(
+            "New Plan Ahead board shows realistic capacity, planned work and calendar commitments across seven days",
+            "Plan or adjust any future day, then return to the same week after saving or cancelling",
+            "Swipe between weeks, jump back to this week and open a planned task directly from the board",
+            "Past weeks are review-only and show completed or skipped focus blocks instead of pretending they are still planned",
+            "Device-calendar loading is race-safe while switching weeks and refreshes immediately when the overlay is enabled",
+        ),
+    ),
+    ChangelogEntry(
         "3.1.0", "July 2026",
         listOf(
             "Smart replan rebuilds only future auto-suggestions while preserving manual, completed and past blocks",

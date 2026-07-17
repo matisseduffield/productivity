@@ -15,6 +15,7 @@ implementation map).
 - Calendar interoperability: merge or export standard `.ics` event files
 - Smart Quick Add: dates, time ranges, task estimates, relative offsets, recurrence, priorities and #categories
 - Multiple work sessions per task, future-safe smart replanning, working hours and planned-versus-actual review
+- Seven-day Plan Ahead board with event-aware capacity, future-day planning, week swipes and historical review
 - Private productivity insights: focus trends, follow-through, streaks and category breakdowns
 - Widgets (including Daily Plan), biometric app/note unlock, recurring tasks, custom categories, soft-delete trash
 - All data stays on-device: Room for domain records and DataStore for preferences/security settings

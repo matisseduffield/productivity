@@ -8,6 +8,7 @@ import com.bento.calendar.data.TaskItem
 import com.bento.calendar.data.WorkHours
 import com.bento.calendar.data.planningCandidates
 import com.bento.calendar.data.suggestDayPlan
+import com.bento.calendar.data.summarizeDayPlan
 import com.bento.calendar.data.completeTaskWithBlocks
 import com.bento.calendar.data.AppData
 import com.bento.calendar.data.Recur
@@ -87,6 +88,37 @@ class PlannerTest {
         val result = suggestDayPlan(day, listOf(task), emptyList(), emptyList(), hours)
         assertEquals(480, result.suggestions.sumOf { it.durationMin })
         assertEquals(120, result.unscheduledMinutes["t"])
+    }
+
+    @Test fun `week capacity merges overlapping meetings instead of double counting`() {
+        val summary = summarizeDayPlan(
+            day,
+            emptyList(),
+            listOf(BusyInterval(600, 660), BusyInterval(630, 690)),
+            hours,
+        )
+        assertEquals(390, summary.availableMinutes)
+    }
+
+    @Test fun `week summary counts only unresolved blocks as planned work`() {
+        val blocks = listOf(
+            TaskBlock("open", "t", date = day.toString(), startMin = 540, durationMin = 60),
+            TaskBlock("done", "t", date = day.toString(), startMin = 600, durationMin = 30, state = BlockState.COMPLETED),
+            TaskBlock("skip", "t", date = day.toString(), startMin = 630, durationMin = 30, state = BlockState.SKIPPED),
+        )
+        val summary = summarizeDayPlan(day, blocks, emptyList(), hours)
+        assertEquals(60, summary.plannedMinutes)
+        assertEquals(30, summary.completedMinutes)
+        assertEquals(30, summary.skippedMinutes)
+        assertEquals(1, summary.completedBlocks)
+        assertEquals(1, summary.skippedBlocks)
+    }
+
+    @Test fun `day off summary has no capacity and exposes overload`() {
+        val block = TaskBlock("open", "t", date = day.toString(), startMin = 540, durationMin = 30)
+        val summary = summarizeDayPlan(day, listOf(block), emptyList(), hours.copy(enabled = false))
+        assertEquals(0, summary.availableMinutes)
+        assertEquals(30, summary.overloadMinutes)
     }
 
     @Test fun `disabled workday schedules nothing`() {

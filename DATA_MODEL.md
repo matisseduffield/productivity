@@ -58,6 +58,11 @@ or `agenda`) so the user's working view survives a process restart.
 - Suggested blocks remain transient until the user confirms the plan.
 - Replanning may replace only future `suggested` blocks for the target day;
   manual, completed, skipped and already-past blocks are immutable inputs.
+- The seven-day board is derived, not persisted: each day merges overlapping
+  calendar commitments inside its working-hours window, compares that capacity
+  with planned blocks, and reports completed/skipped history separately.
+- Past days are review-only. Opening the planner is rejected before today, so
+  historical records cannot be rewritten through the planning UI.
 
 ## Focus invariants
 
