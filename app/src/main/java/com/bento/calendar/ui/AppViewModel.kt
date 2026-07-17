@@ -32,6 +32,7 @@ import com.bento.calendar.data.NoteItem
 import com.bento.calendar.data.Prefs
 import com.bento.calendar.data.Priority
 import com.bento.calendar.data.PlanResult
+import com.bento.calendar.data.WeekPlanResult
 import com.bento.calendar.data.Recur
 import com.bento.calendar.data.SubTask
 import com.bento.calendar.data.TaskItem
@@ -171,6 +172,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var insightsOpen by mutableStateOf(false)
         private set
     var weekPlannerOpen by mutableStateOf(false)
+        private set
+    var weekAutoPlanOpen by mutableStateOf(false)
         private set
     var weekPlannerAnchor by mutableStateOf(LocalDate.now())
         private set
@@ -377,26 +380,40 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun openWeekPlanner(date: LocalDate = today()) {
         if (planningOpen) closePlanner()
+        weekAutoPlanOpen = false
         weekPlannerAnchor = startOfWeek(date, prefs().monday)
         weekPlannerOpen = true
         ensureDeviceCalendarRange(weekPlannerAnchor, weekPlannerAnchor.plusDays(6))
     }
 
     fun closeWeekPlanner() {
+        weekAutoPlanOpen = false
         weekPlannerOpen = false
     }
 
+    fun openWeekAutoPlan() {
+        if (weekPlannerAnchor.plusDays(6).isBefore(today())) return
+        weekAutoPlanOpen = true
+    }
+
+    fun closeWeekAutoPlan() {
+        weekAutoPlanOpen = false
+    }
+
     fun shiftWeekPlanner(weeks: Long) {
+        weekAutoPlanOpen = false
         weekPlannerAnchor = weekPlannerAnchor.plusWeeks(weeks)
         ensureDeviceCalendarRange(weekPlannerAnchor, weekPlannerAnchor.plusDays(6))
     }
 
     fun resetWeekPlanner() {
+        weekAutoPlanOpen = false
         weekPlannerAnchor = startOfWeek(today(), prefs().monday)
         ensureDeviceCalendarRange(weekPlannerAnchor, weekPlannerAnchor.plusDays(6))
     }
 
     fun planFromWeek(date: LocalDate) {
+        weekAutoPlanOpen = false
         weekPlannerOpen = false
         tabState = Tab.Today
         openPlanner(date)
@@ -407,6 +424,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         settingsOpen = false
         changelogOpen = false
         insightsOpen = false
+        weekAutoPlanOpen = false
         weekPlannerOpen = false
         categoriesOpen = false
         fabOpen = false
@@ -439,6 +457,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             categoriesOpen -> categoriesOpen = false
             changelogOpen -> changelogOpen = false
             insightsOpen -> insightsOpen = false
+            weekAutoPlanOpen -> weekAutoPlanOpen = false
             weekPlannerOpen -> weekPlannerOpen = false
             settingsOpen -> settingsOpen = false
             planningOpen -> closePlanner()
@@ -448,7 +467,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun hasOverlay(): Boolean =
         pinCtx != null || evDraft != null || tkDraft != null || fabOpen ||
             searchOpen || openNoteId != null || settingsOpen || changelogOpen ||
-            insightsOpen || weekPlannerOpen || planningOpen || categoriesOpen || trashOpen
+            insightsOpen || weekPlannerOpen || weekAutoPlanOpen || planningOpen || categoriesOpen || trashOpen
 
     // ---- Calendar ----
 
@@ -971,6 +990,77 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
         closePlanner()
+    }
+
+    /**
+     * Persist a reviewed multi-day preview without replacing any existing
+     * block. The mutation revalidates task state, remaining effort, deadlines
+     * and collisions so a delayed/double tap cannot over-allocate work.
+     */
+    fun confirmWeekPlan(result: WeekPlanResult) {
+        if (result.suggestions.isEmpty()) return
+        val current = _now.value
+        val earliest = current.toLocalDate()
+        val notBefore = ((current.hour * 60 + current.minute + 14) / 15 * 15).coerceAtMost(1439)
+        val now = System.currentTimeMillis()
+        mut { d ->
+            val tasksById = d.tasks.associateBy { it.id }
+            val remaining = mutableMapOf<String, Int>()
+            tasksById.values.filterNot { it.done }.forEach { task ->
+                val allocated = d.taskBlocks.filter { block ->
+                    block.taskId == task.id && block.state == BlockState.PLANNED &&
+                        (block.date > earliest.toIso() || (
+                            block.date == earliest.toIso() && block.startMin + block.durationMin > notBefore
+                            )) &&
+                        (task.recur == Recur.NONE || block.occurrenceKey == task.due)
+                }.sumOf { it.durationMin }
+                val estimate = (task.estimateMin ?: d.prefs.defaultTaskEstimateMin).coerceIn(15, 24 * 60)
+                remaining[task.id] = (estimate - allocated).coerceAtLeast(0)
+            }
+            val accepted = mutableListOf<TaskBlock>()
+            result.suggestions.sortedWith(compareBy({ it.date }, { it.startMin })).forEach { suggestion ->
+                val task = tasksById[suggestion.taskId]?.takeUnless { it.done } ?: return@forEach
+                if (suggestion.date.isBefore(earliest)) return@forEach
+                val due = task.due?.toDate()
+                if (due != null && !due.isBefore(earliest) && suggestion.date.isAfter(due)) return@forEach
+                val left = remaining[task.id] ?: return@forEach
+                val duration = minOf(suggestion.durationMin, left).let { it / 15 * 15 }
+                if (duration < 15) return@forEach
+                val start = (suggestion.startMin / 15 * 15).coerceIn(0, 1425)
+                val end = (start + duration).coerceAtMost(1440)
+                if (end - start < 15) return@forEach
+                val iso = suggestion.date.toIso()
+                val collides = (d.taskBlocks + accepted).any { block ->
+                    block.date == iso && block.state == BlockState.PLANNED &&
+                        start < block.startMin + block.durationMin && end > block.startMin
+                }
+                if (collides) return@forEach
+                accepted += TaskBlock(
+                    id = newId(),
+                    taskId = task.id,
+                    occurrenceKey = task.takeIf { it.recur != Recur.NONE }?.due,
+                    date = iso,
+                    startMin = start,
+                    durationMin = end - start,
+                    source = BlockSource.SUGGESTED,
+                    createdAt = now,
+                    updatedAt = now,
+                )
+                remaining[task.id] = left - (end - start)
+            }
+            if (accepted.isEmpty()) return@mut d
+            val plannedDates = accepted.mapTo(linkedSetOf()) { it.date }
+            val plans = plannedDates.map { iso ->
+                val date = iso.toDate()
+                val hours = d.prefs.workHours.firstOrNull { it.day == date.dayOfWeek.value }
+                    ?: com.bento.calendar.data.WorkHours.defaults().first { it.day == date.dayOfWeek.value }
+                DayPlan(iso, hours.start.toMins(), hours.end.toMins(), now)
+            }
+            d.copy(
+                taskBlocks = d.taskBlocks + accepted,
+                dayPlans = d.dayPlans.filterNot { it.date in plannedDates } + plans,
+            )
+        }
     }
 
     fun scheduleTaskBlock(taskId: String, date: LocalDate, startMin: Int, durationMin: Int) {

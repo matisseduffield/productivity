@@ -41,6 +41,16 @@ data class ChangelogEntry(val version: String, val date: String, val changes: Li
 
 val CHANGELOG = listOf(
     ChangelogEntry(
+        "3.3.0", "July 2026",
+        listOf(
+            "Auto-plan a whole week: choose tasks once and Bento distributes the missing effort around existing events and work blocks",
+            "Every proposed day, start time and duration is shown before anything is written",
+            "Deadlines are respected, overdue work starts as early as possible and anything that cannot fit stays explicitly unscheduled",
+            "Existing manual and suggested blocks are preserved; already-planned effort is never duplicated",
+            "Android Back now dismisses the auto-plan review sheet before leaving the Plan Ahead board",
+        ),
+    ),
+    ChangelogEntry(
         "3.2.0", "July 2026",
         listOf(
             "New Plan Ahead board shows realistic capacity, planned work and calendar commitments across seven days",

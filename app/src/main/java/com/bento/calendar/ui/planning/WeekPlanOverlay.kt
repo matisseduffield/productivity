@@ -126,11 +126,22 @@ fun WeekPlanOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                     .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                WeekSummary(totalPlanned, totalCompleted, totalCapacity, overloaded, historical) { vm.resetWeekPlanner() }
+                WeekSummary(
+                    totalPlanned,
+                    totalCompleted,
+                    totalCapacity,
+                    overloaded,
+                    historical,
+                    onCurrentWeek = { vm.resetWeekPlanner() },
+                    onAutoPlan = if (historical) null else ({ vm.openWeekAutoPlan() }),
+                )
                 days.forEach { day ->
                     DayPlanCard(vm, data, day, now.toLocalDate())
                 }
             }
+        }
+        if (vm.weekAutoPlanOpen) {
+            WeekAutoPlanSheet(vm, data, anchor, now, onDismiss = { vm.closeWeekAutoPlan() })
         }
     }
 }
@@ -152,6 +163,7 @@ private fun WeekSummary(
     overloaded: Int,
     historical: Boolean,
     onCurrentWeek: () -> Unit,
+    onAutoPlan: (() -> Unit)?,
 ) {
     val c = LocalBento.current
     Row(
@@ -174,13 +186,24 @@ private fun WeekSummary(
                 overloaded > 0 -> Text("$overloaded overloaded ${if (overloaded == 1) "day" else "days"}", fontSize = 10.5.sp, color = c.dng)
             }
         }
-        Text(
-            "This week",
-            fontSize = 10.5.sp,
-            fontWeight = FontWeight.W700,
-            color = c.acc,
-            modifier = Modifier.tap(onClick = onCurrentWeek).background(c.tile, CircleShape).padding(horizontal = 10.dp, vertical = 7.dp),
-        )
+        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (onAutoPlan != null) {
+                Text(
+                    "Auto-plan",
+                    fontSize = 10.5.sp,
+                    fontWeight = FontWeight.W700,
+                    color = Color.White,
+                    modifier = Modifier.tap(onClick = onAutoPlan).background(c.acc, CircleShape).padding(horizontal = 11.dp, vertical = 7.dp),
+                )
+            }
+            Text(
+                "This week",
+                fontSize = 10.5.sp,
+                fontWeight = FontWeight.W700,
+                color = c.acc,
+                modifier = Modifier.tap(onClick = onCurrentWeek).background(c.tile, CircleShape).padding(horizontal = 10.dp, vertical = 7.dp),
+            )
+        }
     }
 }
 

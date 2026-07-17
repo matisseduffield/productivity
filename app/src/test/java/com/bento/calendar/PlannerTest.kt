@@ -8,6 +8,7 @@ import com.bento.calendar.data.TaskItem
 import com.bento.calendar.data.WorkHours
 import com.bento.calendar.data.planningCandidates
 import com.bento.calendar.data.suggestDayPlan
+import com.bento.calendar.data.suggestWeekPlan
 import com.bento.calendar.data.summarizeDayPlan
 import com.bento.calendar.data.completeTaskWithBlocks
 import com.bento.calendar.data.AppData
@@ -119,6 +120,82 @@ class PlannerTest {
         val summary = summarizeDayPlan(day, listOf(block), emptyList(), hours.copy(enabled = false))
         assertEquals(0, summary.availableMinutes)
         assertEquals(30, summary.overloadMinutes)
+    }
+
+    @Test fun `week plan carries unfinished effort into the next workday`() {
+        val shortDays = (1..7).map { WorkHours(it, it <= 5, "09:00", "10:00") }
+        val result = suggestWeekPlan(
+            day, day, listOf(TaskItem("t", "Deep work", estimateMin = 120)),
+            emptyList(), emptyMap(), shortDays,
+        )
+        assertEquals(
+            listOf(day to 60, day.plusDays(1) to 60),
+            result.suggestions.map { it.date to it.durationMin },
+        )
+        assertTrue(result.unscheduledMinutes.isEmpty())
+    }
+
+    @Test fun `week plan respects calendar blocks and current time`() {
+        val result = suggestWeekPlan(
+            weekStart = day,
+            fromDate = day,
+            tasks = listOf(TaskItem("t", "Task", estimateMin = 30)),
+            existingBlocks = emptyList(),
+            calendarBusy = mapOf(day to listOf(BusyInterval(615, 660))),
+            workHours = listOf(hours),
+            notBeforeMin = 607,
+        )
+        assertEquals(660, result.suggestions.single().startMin)
+    }
+
+    @Test fun `dated work is never placed after its deadline`() {
+        val shortDays = (1..7).map { WorkHours(it, it <= 5, "09:00", "10:00") }
+        val urgent = TaskItem("urgent", "Urgent", due = day.toString(), estimateMin = 90)
+        val later = TaskItem("later", "Later", estimateMin = 60)
+        val result = suggestWeekPlan(day, day, listOf(later, urgent), emptyList(), emptyMap(), shortDays)
+        assertEquals(listOf("urgent"), result.suggestions.filter { it.date == day }.map { it.taskId })
+        assertEquals(30, result.unscheduledMinutes["urgent"])
+        assertEquals(day.plusDays(1), result.suggestions.first { it.taskId == "later" }.date)
+    }
+
+    @Test fun `existing future allocation is subtracted before week planning`() {
+        val existing = TaskBlock("b", "t", date = day.plusDays(2).toString(), startMin = 540, durationMin = 60)
+        val result = suggestWeekPlan(
+            day, day, listOf(TaskItem("t", "Task", estimateMin = 90)),
+            listOf(existing), emptyMap(), listOf(hours),
+        )
+        assertEquals(30, result.suggestions.sumOf { it.durationMin })
+    }
+
+    @Test fun `future week preview counts work already planned before that week`() {
+        val futureWeek = day.plusWeeks(1)
+        val existing = TaskBlock("b", "t", date = day.plusDays(1).toString(), startMin = 540, durationMin = 60)
+        val result = suggestWeekPlan(
+            futureWeek, futureWeek, listOf(TaskItem("t", "Task", estimateMin = 90)),
+            listOf(existing), emptyMap(), WorkHours.defaults(), allocationFromDate = day,
+        )
+        assertEquals(30, result.suggestions.sumOf { it.durationMin })
+    }
+
+    @Test fun `missed block earlier today does not reduce week estimate`() {
+        val missed = TaskBlock("b", "t", date = day.toString(), startMin = 540, durationMin = 60)
+        val result = suggestWeekPlan(
+            day, day, listOf(TaskItem("t", "Task", estimateMin = 60)),
+            listOf(missed), emptyMap(), WorkHours.defaults(),
+            notBeforeMin = 660,
+            allocationFromDate = day,
+            allocationNotBeforeMin = 660,
+        )
+        assertEquals(60, result.suggestions.sumOf { it.durationMin })
+        assertEquals(660, result.suggestions.first().startMin)
+    }
+
+    @Test fun `week plan never writes into days before its planning date`() {
+        val result = suggestWeekPlan(
+            day, day.plusDays(2), listOf(TaskItem("t", "Task", estimateMin = 30)),
+            emptyList(), emptyMap(), WorkHours.defaults(),
+        )
+        assertEquals(day.plusDays(2), result.suggestions.single().date)
     }
 
     @Test fun `disabled workday schedules nothing`() {

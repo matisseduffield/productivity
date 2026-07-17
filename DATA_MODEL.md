@@ -63,6 +63,10 @@ or `agenda`) so the user's working view survives a process restart.
   with planned blocks, and reports completed/skipped history separately.
 - Past days are review-only. Opening the planner is rejected before today, so
   historical records cannot be rewritten through the planning UI.
+- Weekly auto-plan suggestions are transient until confirmation. The scheduler
+  subtracts still-relevant planned effort, treats every existing block as
+  immutable occupancy, obeys task deadlines and exposes all overflow instead
+  of silently moving it beyond the selected week.
 
 ## Focus invariants
 

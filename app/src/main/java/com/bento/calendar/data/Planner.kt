@@ -22,6 +22,14 @@ data class PlanResult(
     val requestedMinutes: Int,
 )
 
+data class WeekPlanResult(
+    val suggestions: List<PlanSuggestion>,
+    /** Remaining minutes that could not be placed before the week/deadline. */
+    val unscheduledMinutes: Map<String, Int>,
+    val availableMinutes: Int,
+    val requestedMinutes: Int,
+)
+
 data class DayPlanningSummary(
     val date: LocalDate,
     /** Work time left after timed calendar commitments. */
@@ -110,30 +118,8 @@ fun suggestDayPlan(
     val workStart = alignUp(maxOf(configuredStart, notBeforeMin ?: configuredStart).coerceIn(0, 1439))
     val workEnd = alignDown(workHours.end.toMins().coerceIn(1, 1440))
     if (workEnd <= workStart) return PlanResult(emptyList(), tasks.associate { it.id to estimateOf(it, defaultEstimateMin) }, 0, tasks.sumOf { estimateOf(it, defaultEstimateMin) })
-
     val dateIso = date.toIso()
-    val occupied = (
-        calendarBusy + existingBlocks
-            .filter { it.date == dateIso && it.state == BlockState.PLANNED }
-            .map { BusyInterval(it.startMin, it.startMin + it.durationMin) }
-        )
-        .mapNotNull { interval ->
-            // Reserve the full touched grid cells so a 10:07 meeting can
-            // never produce a supposedly valid 10:07 task block.
-            val start = maxOf(workStart, alignDown(interval.startMin))
-            val end = minOf(workEnd, alignUp(interval.endMin))
-            if (end > start) BusyInterval(start, end) else null
-        }
-        .sortedBy { it.startMin }
-        .merge()
-
-    val free = mutableListOf<BusyInterval>()
-    var cursor = workStart
-    occupied.forEach { busy ->
-        if (busy.startMin > cursor) free += BusyInterval(cursor, busy.startMin)
-        cursor = maxOf(cursor, busy.endMin)
-    }
-    if (cursor < workEnd) free += BusyInterval(cursor, workEnd)
+    val free = freeIntervals(dateIso, calendarBusy, existingBlocks, workHours, notBeforeMin)
 
     val suggestions = mutableListOf<PlanSuggestion>()
     val unscheduled = linkedMapOf<String, Int>()
@@ -189,6 +175,139 @@ fun suggestDayPlan(
         availableMinutes = free.sumOf { it.endMin - it.startMin },
         requestedMinutes = requested,
     )
+}
+
+/**
+ * Deterministic seven-day scheduler. It fills only free time, subtracts work
+ * that is already planned now or later, and never places a dated task after
+ * its deadline. Existing blocks are occupancy, never replacement candidates.
+ */
+fun suggestWeekPlan(
+    weekStart: LocalDate,
+    fromDate: LocalDate,
+    tasks: List<TaskItem>,
+    existingBlocks: List<TaskBlock>,
+    calendarBusy: Map<LocalDate, List<BusyInterval>>,
+    workHours: List<WorkHours>,
+    defaultEstimateMin: Int = 30,
+    notBeforeMin: Int? = null,
+    allocationFromDate: LocalDate = fromDate,
+    allocationNotBeforeMin: Int? = null,
+): WeekPlanResult {
+    val weekEnd = weekStart.plusDays(6)
+    val firstDay = maxOf(weekStart, fromDate)
+    if (firstDay.isAfter(weekEnd) || tasks.isEmpty()) {
+        return WeekPlanResult(emptyList(), tasks.associate { it.id to estimateOf(it, defaultEstimateMin) }, 0, tasks.sumOf { estimateOf(it, defaultEstimateMin) })
+    }
+
+    val ordered = tasks.withIndex().sortedWith(
+        compareBy<IndexedValue<TaskItem>>(
+            { it.value.due?.toDate() ?: LocalDate.MAX },
+            { -it.value.priority },
+            { it.index },
+        ),
+    ).map { it.value }
+    val remaining = linkedMapOf<String, Int>()
+    ordered.forEach { task ->
+        val allocated = existingBlocks.filter { block ->
+            block.taskId == task.id && block.state == BlockState.PLANNED &&
+                (block.date > allocationFromDate.toIso() || (
+                    block.date == allocationFromDate.toIso() &&
+                        (allocationNotBeforeMin == null || block.startMin + block.durationMin > allocationNotBeforeMin)
+                    )) &&
+                (task.recur == Recur.NONE || block.occurrenceKey == task.due)
+        }.sumOf { it.durationMin }
+        remaining[task.id] = (estimateOf(task, defaultEstimateMin) - allocated).coerceAtLeast(0)
+    }
+    val requested = remaining.values.sum()
+    val suggestions = mutableListOf<PlanSuggestion>()
+    var available = 0
+
+    var date = firstDay
+    while (!date.isAfter(weekEnd)) {
+        val hours = workHours.firstOrNull { it.day == date.dayOfWeek.value }
+            ?: WorkHours.defaults().first { it.day == date.dayOfWeek.value }
+        val free = freeIntervals(
+            date.toIso(),
+            calendarBusy[date].orEmpty(),
+            existingBlocks,
+            hours,
+            notBeforeMin.takeIf { date == fromDate },
+        )
+        available += free.sumOf { it.endMin - it.startMin }
+        var slotIndex = 0
+        var cursor = free.firstOrNull()?.startMin ?: 1440
+
+        ordered.forEach { task ->
+            val due = task.due?.toDate()
+            val overdueAtStart = due?.isBefore(firstDay) == true
+            if (due != null && !overdueAtStart && date.isAfter(due)) return@forEach
+            var left = remaining[task.id] ?: 0
+            while (left >= PLAN_GRID_MIN && slotIndex < free.size) {
+                val slot = free[slotIndex]
+                cursor = maxOf(cursor, slot.startMin)
+                val slotMinutes = alignDown(slot.endMin - cursor)
+                if (slotMinutes < PLAN_GRID_MIN) {
+                    slotIndex++
+                    cursor = free.getOrNull(slotIndex)?.startMin ?: 1440
+                    continue
+                }
+                val duration = minOf(alignUp(left), slotMinutes)
+                suggestions += PlanSuggestion(task.id, date, cursor, duration, task.estimateMin == null)
+                left = (left - duration).coerceAtLeast(0)
+                cursor += duration
+                if (cursor >= slot.endMin) {
+                    slotIndex++
+                    cursor = free.getOrNull(slotIndex)?.startMin ?: 1440
+                }
+            }
+            remaining[task.id] = left
+        }
+        date = date.plusDays(1)
+    }
+
+    return WeekPlanResult(
+        suggestions = suggestions,
+        unscheduledMinutes = remaining.filterValues { it > 0 },
+        availableMinutes = available,
+        requestedMinutes = requested,
+    )
+}
+
+private fun freeIntervals(
+    dateIso: String,
+    calendarBusy: List<BusyInterval>,
+    existingBlocks: List<TaskBlock>,
+    workHours: WorkHours,
+    notBeforeMin: Int?,
+): List<BusyInterval> {
+    if (!workHours.enabled) return emptyList()
+    val configuredStart = workHours.start.toMins().coerceIn(0, 1439)
+    val workStart = alignUp(maxOf(configuredStart, notBeforeMin ?: configuredStart).coerceIn(0, 1439))
+    val workEnd = alignDown(workHours.end.toMins().coerceIn(1, 1440))
+    if (workEnd <= workStart) return emptyList()
+    val occupied = (
+        calendarBusy + existingBlocks
+            .filter { it.date == dateIso && it.state == BlockState.PLANNED }
+            .map { BusyInterval(it.startMin, it.startMin + it.durationMin) }
+        )
+        .mapNotNull { interval ->
+            // Reserve the full touched grid cells so a 10:07 meeting can
+            // never produce a supposedly valid 10:07 task block.
+            val start = maxOf(workStart, alignDown(interval.startMin))
+            val end = minOf(workEnd, alignUp(interval.endMin))
+            if (end > start) BusyInterval(start, end) else null
+        }
+        .sortedBy { it.startMin }
+        .merge()
+    val free = mutableListOf<BusyInterval>()
+    var cursor = workStart
+    occupied.forEach { busy ->
+        if (busy.startMin > cursor) free += BusyInterval(cursor, busy.startMin)
+        cursor = maxOf(cursor, busy.endMin)
+    }
+    if (cursor < workEnd) free += BusyInterval(cursor, workEnd)
+    return free
 }
 
 private fun estimateOf(task: TaskItem, fallback: Int): Int =
