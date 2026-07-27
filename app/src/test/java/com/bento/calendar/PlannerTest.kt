@@ -1,12 +1,15 @@
 package com.bento.calendar
 
 import com.bento.calendar.data.BlockState
+import com.bento.calendar.data.BlockSource
 import com.bento.calendar.data.BusyInterval
+import com.bento.calendar.data.PlanningConflictReason
 import com.bento.calendar.data.Priority
 import com.bento.calendar.data.TaskBlock
 import com.bento.calendar.data.TaskItem
 import com.bento.calendar.data.WorkHours
 import com.bento.calendar.data.planningCandidates
+import com.bento.calendar.data.planningConflicts
 import com.bento.calendar.data.suggestDayPlan
 import com.bento.calendar.data.suggestWeekPlan
 import com.bento.calendar.data.summarizeDayPlan
@@ -120,6 +123,68 @@ class PlannerTest {
         val summary = summarizeDayPlan(day, listOf(block), emptyList(), hours.copy(enabled = false))
         assertEquals(0, summary.availableMinutes)
         assertEquals(30, summary.overloadMinutes)
+    }
+
+    @Test fun `schedule health detects calendar and work hour drift`() {
+        val calendarConflict = TaskBlock(
+            "calendar", "a", date = day.toString(), startMin = 600, durationMin = 60,
+            source = BlockSource.SUGGESTED,
+        )
+        val outsideHours = TaskBlock(
+            "hours", "b", date = day.toString(), startMin = 480, durationMin = 30,
+        )
+        val conflicts = planningConflicts(
+            day,
+            day,
+            listOf(calendarConflict, outsideHours),
+            mapOf(day to listOf(BusyInterval(630, 690))),
+            listOf(hours),
+        ).associateBy { it.blockId }
+
+        assertEquals(setOf(PlanningConflictReason.CALENDAR), conflicts.getValue("calendar").reasons)
+        assertTrue(conflicts.getValue("calendar").repairable)
+        assertEquals(setOf(PlanningConflictReason.WORK_HOURS), conflicts.getValue("hours").reasons)
+        assertTrue(!conflicts.getValue("hours").repairable)
+    }
+
+    @Test fun `overlapping planned blocks are both flagged once`() {
+        val first = TaskBlock("a", "a", date = day.toString(), startMin = 540, durationMin = 60)
+        val second = TaskBlock(
+            "b", "b", date = day.toString(), startMin = 570, durationMin = 60,
+            source = BlockSource.SUGGESTED,
+        )
+        val conflicts = planningConflicts(day, day, listOf(first, second), emptyMap(), listOf(hours))
+
+        assertEquals(listOf("a", "b"), conflicts.map { it.blockId })
+        assertTrue(conflicts.all { it.reasons == setOf(PlanningConflictReason.TASK_BLOCK) })
+        assertTrue(!conflicts.first().repairable)
+        assertTrue(conflicts.last().repairable)
+    }
+
+    @Test fun `historical block states and dates are not actionable conflicts`() {
+        val completed = TaskBlock(
+            "done", "t", date = day.toString(), startMin = 480, durationMin = 60,
+            state = BlockState.COMPLETED,
+        )
+        val skipped = completed.copy(id = "skip", state = BlockState.SKIPPED)
+        val past = completed.copy(id = "past", date = day.minusDays(1).toString(), state = BlockState.PLANNED)
+
+        assertTrue(
+            planningConflicts(day, day, listOf(completed, skipped, past), emptyMap(), listOf(hours)).isEmpty(),
+        )
+    }
+
+    @Test fun `disabled workday flags every unresolved block`() {
+        val block = TaskBlock(
+            "auto", "t", date = day.toString(), startMin = 540, durationMin = 30,
+            source = BlockSource.SUGGESTED,
+        )
+        val conflict = planningConflicts(
+            day, day, listOf(block), emptyMap(), listOf(hours.copy(enabled = false)),
+        ).single()
+
+        assertEquals(setOf(PlanningConflictReason.WORK_HOURS), conflict.reasons)
+        assertTrue(conflict.repairable)
     }
 
     @Test fun `week plan carries unfinished effort into the next workday`() {

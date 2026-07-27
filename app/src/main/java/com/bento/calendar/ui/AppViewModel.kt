@@ -43,6 +43,7 @@ import com.bento.calendar.data.TrashEntry
 import com.bento.calendar.data.parseQuickAdd
 import com.bento.calendar.data.occurrencesOn
 import com.bento.calendar.data.planningCandidates
+import com.bento.calendar.data.planningConflicts
 import com.bento.calendar.data.suggestDayPlan
 import com.bento.calendar.data.minsToHm
 import com.bento.calendar.data.newId
@@ -174,6 +175,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var weekPlannerOpen by mutableStateOf(false)
         private set
     var weekAutoPlanOpen by mutableStateOf(false)
+        private set
+    var weekRepairBlockIds by mutableStateOf<Set<String>>(emptySet())
         private set
     var weekPlannerAnchor by mutableStateOf(LocalDate.now())
         private set
@@ -381,6 +384,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun openWeekPlanner(date: LocalDate = today()) {
         if (planningOpen) closePlanner()
         weekAutoPlanOpen = false
+        weekRepairBlockIds = emptySet()
         weekPlannerAnchor = startOfWeek(date, prefs().monday)
         weekPlannerOpen = true
         ensureDeviceCalendarRange(weekPlannerAnchor, weekPlannerAnchor.plusDays(6))
@@ -388,32 +392,44 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun closeWeekPlanner() {
         weekAutoPlanOpen = false
+        weekRepairBlockIds = emptySet()
         weekPlannerOpen = false
     }
 
     fun openWeekAutoPlan() {
         if (weekPlannerAnchor.plusDays(6).isBefore(today())) return
+        weekRepairBlockIds = emptySet()
+        weekAutoPlanOpen = true
+    }
+
+    fun openWeekRepair(blockIds: Set<String>) {
+        if (weekPlannerAnchor.plusDays(6).isBefore(today()) || blockIds.isEmpty()) return
+        weekRepairBlockIds = blockIds
         weekAutoPlanOpen = true
     }
 
     fun closeWeekAutoPlan() {
         weekAutoPlanOpen = false
+        weekRepairBlockIds = emptySet()
     }
 
     fun shiftWeekPlanner(weeks: Long) {
         weekAutoPlanOpen = false
+        weekRepairBlockIds = emptySet()
         weekPlannerAnchor = weekPlannerAnchor.plusWeeks(weeks)
         ensureDeviceCalendarRange(weekPlannerAnchor, weekPlannerAnchor.plusDays(6))
     }
 
     fun resetWeekPlanner() {
         weekAutoPlanOpen = false
+        weekRepairBlockIds = emptySet()
         weekPlannerAnchor = startOfWeek(today(), prefs().monday)
         ensureDeviceCalendarRange(weekPlannerAnchor, weekPlannerAnchor.plusDays(6))
     }
 
     fun planFromWeek(date: LocalDate) {
         weekAutoPlanOpen = false
+        weekRepairBlockIds = emptySet()
         weekPlannerOpen = false
         tabState = Tab.Today
         openPlanner(date)
@@ -425,6 +441,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         changelogOpen = false
         insightsOpen = false
         weekAutoPlanOpen = false
+        weekRepairBlockIds = emptySet()
         weekPlannerOpen = false
         categoriesOpen = false
         fabOpen = false
@@ -457,7 +474,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             categoriesOpen -> categoriesOpen = false
             changelogOpen -> changelogOpen = false
             insightsOpen -> insightsOpen = false
-            weekAutoPlanOpen -> weekAutoPlanOpen = false
+            weekAutoPlanOpen -> {
+                weekAutoPlanOpen = false
+                weekRepairBlockIds = emptySet()
+            }
             weekPlannerOpen -> weekPlannerOpen = false
             settingsOpen -> settingsOpen = false
             planningOpen -> closePlanner()
@@ -993,21 +1013,54 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Persist a reviewed multi-day preview without replacing any existing
-     * block. The mutation revalidates task state, remaining effort, deadlines
-     * and collisions so a delayed/double tap cannot over-allocate work.
+     * Persist a reviewed multi-day preview. In repair mode, only the named
+     * still-conflicted auto-suggestions may be replaced; manual, completed and
+     * skipped work is immutable. The mutation revalidates calendars, working
+     * hours, task state, remaining effort, deadlines and collisions.
      */
-    fun confirmWeekPlan(result: WeekPlanResult) {
-        if (result.suggestions.isEmpty()) return
+    fun confirmWeekPlan(result: WeekPlanResult, replaceBlockIds: Set<String> = emptySet()) {
+        if (result.suggestions.isEmpty() && replaceBlockIds.isEmpty()) return
         val current = _now.value
         val earliest = current.toLocalDate()
         val notBefore = ((current.hour * 60 + current.minute + 14) / 15 * 15).coerceAtMost(1439)
         val now = System.currentTimeMillis()
+        val deviceSnapshot = deviceEvents
         mut { d ->
             val tasksById = d.tasks.associateBy { it.id }
+            val requestedReplacements = d.taskBlocks.filter { block ->
+                block.id in replaceBlockIds &&
+                    block.state == BlockState.PLANNED &&
+                    block.source == BlockSource.SUGGESTED &&
+                    block.date.toDate() >= earliest
+            }
+            val replacementDates = requestedReplacements.map { it.date.toDate() }
+            val busyForDate = { date: LocalDate ->
+                occurrencesOn(d.events, date).filterNot { it.allDay }
+                    .map { BusyInterval(it.start.toMins(), it.end.toMins()) } +
+                    deviceSnapshot[date.toIso()].orEmpty().filterNot { it.allDay }
+                        .map { BusyInterval(it.start.toMins(), it.end.toMins()) }
+            }
+            val replaceableIds = if (requestedReplacements.isEmpty()) {
+                emptySet()
+            } else {
+                val from = replacementDates.minOrNull()!!
+                val to = replacementDates.maxOrNull()!!
+                planningConflicts(
+                    fromDate = from,
+                    toDate = to,
+                    taskBlocks = d.taskBlocks,
+                    calendarBusy = generateSequence(from) { date ->
+                        date.plusDays(1).takeUnless { it.isAfter(to) }
+                    }.associateWith(busyForDate),
+                    workHours = d.prefs.workHours,
+                ).filter { it.repairable && it.blockId in replaceBlockIds }
+                    .mapTo(linkedSetOf()) { it.blockId }
+            }
+            if (replaceBlockIds.isNotEmpty() && replaceableIds.isEmpty()) return@mut d
+            val retainedBlocks = d.taskBlocks.filterNot { it.id in replaceableIds }
             val remaining = mutableMapOf<String, Int>()
             tasksById.values.filterNot { it.done }.forEach { task ->
-                val allocated = d.taskBlocks.filter { block ->
+                val allocated = retainedBlocks.filter { block ->
                     block.taskId == task.id && block.state == BlockState.PLANNED &&
                         (block.date > earliest.toIso() || (
                             block.date == earliest.toIso() && block.startMin + block.durationMin > notBefore
@@ -1029,8 +1082,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val start = (suggestion.startMin / 15 * 15).coerceIn(0, 1425)
                 val end = (start + duration).coerceAtMost(1440)
                 if (end - start < 15) return@forEach
+                if (suggestion.date == earliest && start < notBefore) return@forEach
                 val iso = suggestion.date.toIso()
-                val collides = (d.taskBlocks + accepted).any { block ->
+                val hours = d.prefs.workHours.firstOrNull { it.day == suggestion.date.dayOfWeek.value }
+                    ?: com.bento.calendar.data.WorkHours.defaults().first { it.day == suggestion.date.dayOfWeek.value }
+                val workStart = hours.start.toMins()
+                val workEnd = hours.end.toMins()
+                if (!hours.enabled || start < workStart || end > workEnd || workEnd <= workStart) return@forEach
+                if (busyForDate(suggestion.date).any { busy -> start < busy.endMin && end > busy.startMin }) return@forEach
+                val collides = (retainedBlocks + accepted).any { block ->
                     block.date == iso && block.state == BlockState.PLANNED &&
                         start < block.startMin + block.durationMin && end > block.startMin
                 }
@@ -1048,8 +1108,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 )
                 remaining[task.id] = left - (end - start)
             }
-            if (accepted.isEmpty()) return@mut d
+            if (accepted.isEmpty() && replaceableIds.isEmpty()) return@mut d
             val plannedDates = accepted.mapTo(linkedSetOf()) { it.date }
+            requestedReplacements.filter { it.id in replaceableIds }
+                .mapTo(plannedDates) { it.date }
             val plans = plannedDates.map { iso ->
                 val date = iso.toDate()
                 val hours = d.prefs.workHours.firstOrNull { it.day == date.dayOfWeek.value }
@@ -1057,7 +1119,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 DayPlan(iso, hours.start.toMins(), hours.end.toMins(), now)
             }
             d.copy(
-                taskBlocks = d.taskBlocks + accepted,
+                taskBlocks = retainedBlocks + accepted,
                 dayPlans = d.dayPlans.filterNot { it.date in plannedDates } + plans,
             )
         }

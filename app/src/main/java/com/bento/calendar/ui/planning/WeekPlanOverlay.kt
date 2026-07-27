@@ -38,7 +38,9 @@ import com.bento.calendar.data.AppData
 import com.bento.calendar.data.BlockState
 import com.bento.calendar.data.BusyInterval
 import com.bento.calendar.data.DayPlanningSummary
+import com.bento.calendar.data.PlanningConflict
 import com.bento.calendar.data.occurrencesOn
+import com.bento.calendar.data.planningConflicts
 import com.bento.calendar.data.summarizeDayPlan
 import com.bento.calendar.data.toIso
 import com.bento.calendar.data.toMins
@@ -57,6 +59,7 @@ import java.util.Locale
 private data class WeekDayPlan(
     val summary: DayPlanningSummary,
     val blocks: List<com.bento.calendar.data.TaskBlock>,
+    val conflicts: List<PlanningConflict>,
 )
 
 /** Seven-day capacity board and the entry point for planning future days. */
@@ -64,20 +67,38 @@ private data class WeekDayPlan(
 fun WeekPlanOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
     val c = LocalBento.current
     val anchor = vm.weekPlannerAnchor
-    val days = remember(data, vm.deviceEvents, anchor) {
+    val busyByDate = remember(data.events, vm.deviceEvents, anchor) {
+        (0L..6L).associate { offset ->
+            val date = anchor.plusDays(offset)
+            val iso = date.toIso()
+            date to (
+                occurrencesOn(data.events, date).filterNot { it.allDay }
+                    .map { BusyInterval(it.start.toMins(), it.end.toMins()) } +
+                    vm.deviceEvents[iso].orEmpty().filterNot { it.allDay }
+                        .map { BusyInterval(it.start.toMins(), it.end.toMins()) }
+                )
+        }
+    }
+    val conflicts = remember(data.taskBlocks, data.prefs.workHours, busyByDate, anchor, now.toLocalDate()) {
+        planningConflicts(
+            fromDate = maxOf(anchor, now.toLocalDate()),
+            toDate = anchor.plusDays(6),
+            taskBlocks = data.taskBlocks,
+            calendarBusy = busyByDate,
+            workHours = data.prefs.workHours,
+        )
+    }
+    val days = remember(data, busyByDate, conflicts, anchor) {
         (0L..6L).map { offset ->
             val date = anchor.plusDays(offset)
             val iso = date.toIso()
-            val busy = occurrencesOn(data.events, date).filterNot { it.allDay }
-                .map { BusyInterval(it.start.toMins(), it.end.toMins()) } +
-                vm.deviceEvents[iso].orEmpty().filterNot { it.allDay }
-                    .map { BusyInterval(it.start.toMins(), it.end.toMins()) }
             val hours = data.prefs.workHours.firstOrNull { it.day == date.dayOfWeek.value }
                 ?: com.bento.calendar.data.WorkHours.defaults().first { it.day == date.dayOfWeek.value }
             WeekDayPlan(
-                summary = summarizeDayPlan(date, data.taskBlocks, busy, hours),
+                summary = summarizeDayPlan(date, data.taskBlocks, busyByDate[date].orEmpty(), hours),
                 blocks = data.taskBlocks.filter { it.date == iso }
                     .sortedBy { it.startMin },
+                conflicts = conflicts.filter { it.date == date },
             )
         }
     }
@@ -135,13 +156,75 @@ fun WeekPlanOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                     onCurrentWeek = { vm.resetWeekPlanner() },
                     onAutoPlan = if (historical) null else ({ vm.openWeekAutoPlan() }),
                 )
+                if (conflicts.isNotEmpty()) {
+                    ConflictBanner(
+                        conflicts = conflicts,
+                        onRepair = conflicts.filter { it.repairable }.mapTo(linkedSetOf()) { it.blockId }
+                            .takeIf { it.isNotEmpty() }?.let { ids -> ({ vm.openWeekRepair(ids) }) },
+                    )
+                }
                 days.forEach { day ->
                     DayPlanCard(vm, data, day, now.toLocalDate())
                 }
             }
         }
         if (vm.weekAutoPlanOpen) {
-            WeekAutoPlanSheet(vm, data, anchor, now, onDismiss = { vm.closeWeekAutoPlan() })
+            WeekAutoPlanSheet(
+                vm,
+                data,
+                anchor,
+                now,
+                replaceBlockIds = vm.weekRepairBlockIds,
+                onDismiss = { vm.closeWeekAutoPlan() },
+            )
+        }
+    }
+}
+
+@Composable
+private fun ConflictBanner(conflicts: List<PlanningConflict>, onRepair: (() -> Unit)?) {
+    val c = LocalBento.current
+    val repairable = conflicts.count { it.repairable }
+    Row(
+        Modifier.fillMaxWidth().background(c.dng.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
+            .border(1.dp, c.dng.copy(alpha = 0.28f), RoundedCornerShape(16.dp))
+            .padding(13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                "SCHEDULE NEEDS ATTENTION",
+                fontSize = 9.sp,
+                fontWeight = FontWeight.W700,
+                letterSpacing = 0.1.em,
+                color = c.dng,
+            )
+            Text(
+                "${conflicts.size} ${if (conflicts.size == 1) "block conflicts" else "blocks conflict"} with your latest calendar or working hours.",
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.W600,
+                color = c.tx,
+                modifier = Modifier.padding(top = 3.dp),
+            )
+            if (repairable < conflicts.size) {
+                val manual = conflicts.size - repairable
+                Text(
+                    "$manual manual ${if (manual == 1) "block needs" else "blocks need"} your adjustment.",
+                    fontSize = 9.5.sp,
+                    color = c.faint,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+        }
+        if (onRepair != null) {
+            Text(
+                "Review repair",
+                fontSize = 10.5.sp,
+                fontWeight = FontWeight.W700,
+                color = Color.White,
+                modifier = Modifier.tap(onClick = onRepair).background(c.dng, CircleShape)
+                    .padding(horizontal = 11.dp, vertical = 8.dp),
+            )
         }
     }
 }
@@ -215,13 +298,22 @@ private fun DayPlanCard(vm: AppViewModel, data: AppData, day: WeekDayPlan, today
     val tasks = data.tasks.associateBy { it.id }
     val isToday = date == today
     val isPast = date.isBefore(today)
+    val conflictIds = day.conflicts.mapTo(hashSetOf()) { it.blockId }
     val displayMinutes = if (isPast) summary.completedMinutes else summary.plannedMinutes
     val ratio = if (summary.availableMinutes > 0) {
         (displayMinutes.toFloat() / summary.availableMinutes).coerceIn(0f, 1f)
     } else 0f
     Column(
         Modifier.fillMaxWidth().background(c.tile, RoundedCornerShape(18.dp))
-            .border(1.dp, if (isToday) c.accTint(0.4f) else c.bd, RoundedCornerShape(18.dp)).padding(14.dp),
+            .border(
+                1.dp,
+                when {
+                    day.conflicts.isNotEmpty() -> c.dng.copy(alpha = 0.5f)
+                    isToday -> c.accTint(0.4f)
+                    else -> c.bd
+                },
+                RoundedCornerShape(18.dp),
+            ).padding(14.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f).tap {
@@ -250,6 +342,12 @@ private fun DayPlanCard(vm: AppViewModel, data: AppData, day: WeekDayPlan, today
                 )
                 if (summary.overloadMinutes > 0) {
                     Text("${summary.overloadMinutes}m over", fontSize = 9.5.sp, color = c.dng)
+                } else if (day.conflicts.isNotEmpty()) {
+                    Text(
+                        "${day.conflicts.size} ${if (day.conflicts.size == 1) "conflict" else "conflicts"}",
+                        fontSize = 9.5.sp,
+                        color = c.dng,
+                    )
                 } else if (summary.completedBlocks > 0 || summary.skippedBlocks > 0) {
                     Text("${summary.completedBlocks} done · ${summary.skippedBlocks} skipped", fontSize = 9.5.sp, color = c.faint)
                 }
@@ -273,15 +371,17 @@ private fun DayPlanCard(vm: AppViewModel, data: AppData, day: WeekDayPlan, today
                         Text(Fmt.time(com.bento.calendar.data.minsToHm(block.startMin), data.prefs.use24h), fontSize = 10.5.sp, color = c.faint, modifier = Modifier.width(58.dp))
                         Text(task?.title ?: "Deleted task", fontSize = 11.5.sp, color = c.tx, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                         Text(
-                            when (block.state) {
-                                BlockState.COMPLETED -> "Done"
-                                BlockState.SKIPPED -> "Skipped"
+                            when {
+                                block.id in conflictIds -> "Conflict"
+                                block.state == BlockState.COMPLETED -> "Done"
+                                block.state == BlockState.SKIPPED -> "Skipped"
                                 else -> "${block.durationMin}m"
                             },
                             fontSize = 9.5.sp,
-                            color = when (block.state) {
-                                BlockState.COMPLETED -> c.acc
-                                BlockState.SKIPPED -> c.faint
+                            color = when {
+                                block.id in conflictIds -> c.dng
+                                block.state == BlockState.COMPLETED -> c.acc
+                                block.state == BlockState.SKIPPED -> c.faint
                                 else -> c.sub
                             },
                         )

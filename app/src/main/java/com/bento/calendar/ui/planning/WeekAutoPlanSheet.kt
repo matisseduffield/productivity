@@ -51,26 +51,37 @@ fun WeekAutoPlanSheet(
     data: AppData,
     weekStart: LocalDate,
     now: LocalDateTime,
+    replaceBlockIds: Set<String> = emptySet(),
     onDismiss: () -> Unit,
 ) {
     val c = LocalBento.current
     val today = now.toLocalDate()
     val weekEnd = weekStart.plusDays(6)
-    val candidates = remember(data.tasks, weekStart) {
+    val repairMode = replaceBlockIds.isNotEmpty()
+    val repairTaskIds = remember(data.taskBlocks, replaceBlockIds) {
+        data.taskBlocks.filter { it.id in replaceBlockIds }.mapTo(linkedSetOf()) { it.taskId }
+    }
+    val candidates = remember(data.tasks, weekStart, repairTaskIds) {
         data.tasks.withIndex().filter { !it.value.done }.sortedWith(
             compareBy<IndexedValue<TaskItem>>(
                 { it.value.due?.toDate() ?: LocalDate.MAX },
                 { -it.value.priority },
                 { it.index },
             ),
-        ).map { it.value }
+        ).map { it.value }.let { tasks ->
+            if (repairMode) tasks.filter { it.id in repairTaskIds } else tasks
+        }
     }
-    val initial = remember(candidates, weekEnd) {
-        candidates.filter { task ->
-            task.priority == Priority.HIGH || task.due?.toDate()?.let { !it.isAfter(weekEnd) } == true
-        }.ifEmpty { candidates.take(3) }.mapTo(linkedSetOf()) { it.id }
+    val initial = remember(candidates, weekEnd, repairMode) {
+        if (repairMode) {
+            candidates.mapTo(linkedSetOf()) { it.id }
+        } else {
+            candidates.filter { task ->
+                task.priority == Priority.HIGH || task.due?.toDate()?.let { !it.isAfter(weekEnd) } == true
+            }.ifEmpty { candidates.take(3) }.mapTo(linkedSetOf()) { it.id }
+        }
     }
-    var selected by remember(weekStart, candidates) { mutableStateOf<Set<String>>(initial) }
+    var selected by remember(weekStart, candidates, replaceBlockIds) { mutableStateOf<Set<String>>(initial) }
     val busy = remember(data.events, vm.deviceEvents, weekStart) {
         (0L..6L).associate { offset ->
             val date = weekStart.plusDays(offset)
@@ -84,12 +95,15 @@ fun WeekAutoPlanSheet(
     val notBefore = if (today in weekStart..weekEnd) {
         ((now.hour * 60 + now.minute + 14) / 15 * 15).coerceAtMost(1439)
     } else null
-    val result = remember(selected, data.taskBlocks, data.prefs, busy, weekStart, today, notBefore) {
+    val retainedBlocks = remember(data.taskBlocks, replaceBlockIds) {
+        data.taskBlocks.filterNot { it.id in replaceBlockIds }
+    }
+    val result = remember(selected, retainedBlocks, data.prefs, busy, weekStart, today, notBefore) {
         suggestWeekPlan(
             weekStart = weekStart,
             fromDate = maxOf(weekStart, today),
             tasks = candidates.filter { it.id in selected },
-            existingBlocks = data.taskBlocks,
+            existingBlocks = retainedBlocks,
             calendarBusy = busy,
             workHours = data.prefs.workHours,
             defaultEstimateMin = data.prefs.defaultTaskEstimateMin,
@@ -103,9 +117,18 @@ fun WeekAutoPlanSheet(
     val overflowMinutes = result.unscheduledMinutes.values.sum()
 
     BentoSheet(onDismiss = onDismiss) {
-        Text("Auto-plan this week", fontSize = 19.sp, fontWeight = FontWeight.W700, color = c.tx)
         Text(
-            "Choose work, review every proposed block, then add it around your existing plans. Nothing already scheduled is moved.",
+            if (repairMode) "Repair this week" else "Auto-plan this week",
+            fontSize = 19.sp,
+            fontWeight = FontWeight.W700,
+            color = c.tx,
+        )
+        Text(
+            if (repairMode) {
+                "${replaceBlockIds.size} conflicted auto-planned ${if (replaceBlockIds.size == 1) "block" else "blocks"} will be replaced. Manual and completed work never moves."
+            } else {
+                "Choose work, review every proposed block, then add it around your existing plans. Nothing already scheduled is moved."
+            },
             fontSize = 11.5.sp,
             color = c.sub,
             modifier = Modifier.padding(top = 4.dp),
@@ -118,27 +141,33 @@ fun WeekAutoPlanSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    "CHOOSE WORK",
+                    if (repairMode) "WORK TO REPAIR" else "CHOOSE WORK",
                     fontSize = 9.5.sp,
                     fontWeight = FontWeight.W700,
                     letterSpacing = 0.12.em,
                     color = c.sub,
                     modifier = Modifier.weight(1f),
                 )
-                Text("Recommended", fontSize = 10.sp, fontWeight = FontWeight.W700, color = c.acc, modifier = Modifier.tap { selected = initial }.padding(5.dp))
-                Text("Clear", fontSize = 10.sp, fontWeight = FontWeight.W700, color = c.faint, modifier = Modifier.tap { selected = emptySet() }.padding(5.dp))
+                if (!repairMode) {
+                    Text("Recommended", fontSize = 10.sp, fontWeight = FontWeight.W700, color = c.acc, modifier = Modifier.tap { selected = initial }.padding(5.dp))
+                    Text("Clear", fontSize = 10.sp, fontWeight = FontWeight.W700, color = c.faint, modifier = Modifier.tap { selected = emptySet() }.padding(5.dp))
+                }
             }
             candidates.forEach { task ->
                 val checked = task.id in selected
                 Row(
-                    Modifier.fillMaxWidth().tap {
-                        selected = if (checked) selected - task.id else selected + task.id
+                    Modifier.fillMaxWidth().let { modifier ->
+                        if (repairMode) modifier else modifier.tap {
+                            selected = if (checked) selected - task.id else selected + task.id
+                        }
                     }.padding(vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     BentoCheckbox(
                         checked,
-                        onToggle = { selected = if (checked) selected - task.id else selected + task.id },
+                        onToggle = {
+                            if (!repairMode) selected = if (checked) selected - task.id else selected + task.id
+                        },
                         size = 18.dp,
                         corner = 6.dp,
                     )
@@ -172,7 +201,15 @@ fun WeekAutoPlanSheet(
             ) {
                 Column(Modifier.weight(1f)) {
                     Text("${durationLabel(scheduledMinutes)} scheduled", fontSize = 12.5.sp, fontWeight = FontWeight.W700, color = c.tx)
-                    Text("${result.suggestions.size} new ${if (result.suggestions.size == 1) "block" else "blocks"}", fontSize = 10.sp, color = c.faint)
+                    Text(
+                        if (repairMode) {
+                            "${replaceBlockIds.size} replaced by ${result.suggestions.size}"
+                        } else {
+                            "${result.suggestions.size} new ${if (result.suggestions.size == 1) "block" else "blocks"}"
+                        },
+                        fontSize = 10.sp,
+                        color = c.faint,
+                    )
                 }
                 if (overflowMinutes > 0) Text("${durationLabel(overflowMinutes)} won’t fit", fontSize = 10.5.sp, fontWeight = FontWeight.W700, color = c.dng)
             }
@@ -230,7 +267,11 @@ fun WeekAutoPlanSheet(
                 }
             } else if (selected.isNotEmpty()) {
                 Text(
-                    "No additional time is available before these tasks’ deadlines, or their estimates are already fully planned.",
+                    if (repairMode) {
+                        "No replacement time is available. Applying the repair removes the conflicts and leaves this work unscheduled."
+                    } else {
+                        "No additional time is available before these tasks’ deadlines, or their estimates are already fully planned."
+                    },
                     fontSize = 11.sp,
                     color = c.faint,
                     modifier = Modifier.padding(top = 13.dp),
@@ -243,18 +284,23 @@ fun WeekAutoPlanSheet(
                 Modifier.weight(1f).tap(onClick = onDismiss).background(c.inp, RoundedCornerShape(12.dp)).padding(vertical = 11.dp),
                 contentAlignment = Alignment.Center,
             ) { Text("Cancel", fontSize = 12.sp, fontWeight = FontWeight.W700, color = c.sub) }
+            val canApply = result.suggestions.isNotEmpty() || repairMode
             Box(
-                Modifier.weight(1f).pressable(enabled = result.suggestions.isNotEmpty()) {
-                    vm.confirmWeekPlan(result)
+                Modifier.weight(1f).pressable(enabled = canApply) {
+                    vm.confirmWeekPlan(result, replaceBlockIds)
                     onDismiss()
-                }.background(if (result.suggestions.isNotEmpty()) c.acc else c.inp, RoundedCornerShape(12.dp)).padding(vertical = 11.dp),
+                }.background(if (canApply) c.acc else c.inp, RoundedCornerShape(12.dp)).padding(vertical = 11.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    if (result.suggestions.isEmpty()) "Nothing to add" else "Add ${result.suggestions.size} blocks",
+                    when {
+                        repairMode -> "Apply repair"
+                        result.suggestions.isEmpty() -> "Nothing to add"
+                        else -> "Add ${result.suggestions.size} blocks"
+                    },
                     fontSize = 12.sp,
                     fontWeight = FontWeight.W700,
-                    color = if (result.suggestions.isNotEmpty()) Color.White else c.faint,
+                    color = if (canApply) Color.White else c.faint,
                 )
             }
         }

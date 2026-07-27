@@ -55,6 +55,7 @@ import com.bento.calendar.data.TaskBlock
 import com.bento.calendar.data.FocusOutcome
 import com.bento.calendar.data.BusyInterval
 import com.bento.calendar.data.summarizeDayPlan
+import com.bento.calendar.data.planningConflicts
 import com.bento.calendar.data.TaskItem
 import com.bento.calendar.data.occurrencesOn
 import com.bento.calendar.data.productivityInsights
@@ -406,15 +407,23 @@ private fun DailyPlanCard(vm: AppViewModel, data: AppData, today: LocalDate, use
         .sortedBy { it.startMin }
     val tasks = data.tasks.associateBy { it.id }
     val hours = data.prefs.workHours.firstOrNull { it.day == today.dayOfWeek.value }
-    val summary = hours?.let { work ->
-        val busy = occurrencesOn(data.events, today).filterNot { it.allDay }
-            .map { BusyInterval(it.start.toMins(), it.end.toMins()) } +
-            vm.deviceEvents[iso].orEmpty().filterNot { it.allDay }
-                .map { BusyInterval(it.start.toMins(), it.end.toMins()) }
-        summarizeDayPlan(today, data.taskBlocks, busy, work)
-    }
-    val capacity = summary?.availableMinutes ?: 0
-    val planned = summary?.plannedMinutes ?: blocks.sumOf { it.durationMin }
+        ?: com.bento.calendar.data.WorkHours.defaults().first { it.day == today.dayOfWeek.value }
+    val busy = occurrencesOn(data.events, today).filterNot { it.allDay }
+        .map { BusyInterval(it.start.toMins(), it.end.toMins()) } +
+        vm.deviceEvents[iso].orEmpty().filterNot { it.allDay }
+            .map { BusyInterval(it.start.toMins(), it.end.toMins()) }
+    val summary = summarizeDayPlan(today, data.taskBlocks, busy, hours)
+    val conflicts = planningConflicts(
+        today,
+        today,
+        data.taskBlocks,
+        mapOf(today to busy),
+        data.prefs.workHours,
+    )
+    val conflictIds = conflicts.mapTo(hashSetOf()) { it.blockId }
+    val repairIds = conflicts.filter { it.repairable }.mapTo(linkedSetOf()) { it.blockId }
+    val capacity = summary.availableMinutes
+    val planned = summary.plannedMinutes
     val ratio = if (capacity > 0) (planned.toFloat() / capacity).coerceIn(0f, 1f) else 0f
 
     Column(
@@ -422,7 +431,7 @@ private fun DailyPlanCard(vm: AppViewModel, data: AppData, today: LocalDate, use
             .fillMaxWidth()
             .padding(top = 12.dp)
             .background(c.tile, RoundedCornerShape(19.dp))
-            .border(1.dp, c.bd, RoundedCornerShape(19.dp))
+            .border(1.dp, if (conflicts.isNotEmpty()) c.dng.copy(alpha = 0.5f) else c.bd, RoundedCornerShape(19.dp))
             .padding(15.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -496,12 +505,43 @@ private fun DailyPlanCard(vm: AppViewModel, data: AppData, today: LocalDate, use
                         Box(Modifier.tap { vm.startFocus(task.id, block.id) }.padding(5.dp)) {
                             Icon(BentoIcons.Timer, null, tint = c.acc, modifier = Modifier.size(13.dp))
                         }
-                        Text("${block.durationMin}m", fontSize = 10.5.sp, color = c.sub)
+                        Text(
+                            if (block.id in conflictIds) "Conflict" else "${block.durationMin}m",
+                            fontSize = 10.5.sp,
+                            fontWeight = if (block.id in conflictIds) FontWeight.W700 else FontWeight.W400,
+                            color = if (block.id in conflictIds) c.dng else c.sub,
+                        )
                     }
                 }
                 if (blocks.size > 4) {
                     Text("+${blocks.size - 4} more blocks", fontSize = 11.sp, color = c.faint)
                 }
+            }
+        }
+        if (conflicts.isNotEmpty()) {
+            Row(
+                Modifier.fillMaxWidth().padding(top = 9.dp)
+                    .tap {
+                        vm.openWeekPlanner(today)
+                        if (repairIds.isNotEmpty()) vm.openWeekRepair(repairIds)
+                    }
+                    .background(c.dng.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 11.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "${conflicts.size} schedule ${if (conflicts.size == 1) "conflict" else "conflicts"}",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.W700,
+                    color = c.dng,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    if (repairIds.isNotEmpty()) "Review repair" else "Review week",
+                    fontSize = 10.5.sp,
+                    fontWeight = FontWeight.W700,
+                    color = c.dng,
+                )
             }
         }
         Row(Modifier.fillMaxWidth().padding(top = 11.dp), verticalAlignment = Alignment.CenterVertically) {

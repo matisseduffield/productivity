@@ -41,6 +41,16 @@ data class ChangelogEntry(val version: String, val date: String, val changes: Li
 
 val CHANGELOG = listOf(
     ChangelogEntry(
+        "3.4.0", "July 2026",
+        listOf(
+            "New Schedule Health checks planned work against your latest Bento events, device calendars, working hours and other task blocks",
+            "Conflicts are highlighted on Today and across the seven-day Plan Ahead board instead of failing silently",
+            "Review Repair safely replaces only conflicted auto-planned blocks; manual, completed and skipped work never moves",
+            "Every replacement day, time and overflow is previewed before the repair writes anything",
+            "Repairs are revalidated at commit time so a newly changed calendar cannot create a stale collision",
+        ),
+    ),
+    ChangelogEntry(
         "3.3.0", "July 2026",
         listOf(
             "Auto-plan a whole week: choose tasks once and Bento distributes the missing effort around existing events and work blocks",

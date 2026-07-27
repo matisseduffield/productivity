@@ -6,6 +6,25 @@ const val PLAN_GRID_MIN = 15
 
 data class BusyInterval(val startMin: Int, val endMin: Int)
 
+object PlanningConflictReason {
+    const val CALENDAR = "calendar"
+    const val WORK_HOURS = "work_hours"
+    const val TASK_BLOCK = "task_block"
+}
+
+/**
+ * A derived warning for one unresolved task block. Conflicts are never stored:
+ * they are recalculated from the latest calendars, work hours and task blocks.
+ * Only auto-planned suggestions are eligible for automatic repair.
+ */
+data class PlanningConflict(
+    val blockId: String,
+    val taskId: String,
+    val date: LocalDate,
+    val reasons: Set<String>,
+    val repairable: Boolean,
+)
+
 data class PlanSuggestion(
     val taskId: String,
     val date: LocalDate,
@@ -42,6 +61,72 @@ data class DayPlanningSummary(
     val enabled: Boolean,
 ) {
     val overloadMinutes: Int get() = (plannedMinutes - availableMinutes).coerceAtLeast(0)
+}
+
+/**
+ * Detects schedule drift after calendars, working hours or task blocks change.
+ * Completed/skipped work is historical and deliberately excluded.
+ */
+fun planningConflicts(
+    fromDate: LocalDate,
+    toDate: LocalDate,
+    taskBlocks: List<TaskBlock>,
+    calendarBusy: Map<LocalDate, List<BusyInterval>>,
+    workHours: List<WorkHours>,
+): List<PlanningConflict> {
+    if (toDate.isBefore(fromDate)) return emptyList()
+    val planned = taskBlocks.filter { block ->
+        block.state == BlockState.PLANNED &&
+            block.date.toDate().let { !it.isBefore(fromDate) && !it.isAfter(toDate) }
+    }
+    if (planned.isEmpty()) return emptyList()
+
+    val reasons = linkedMapOf<String, MutableSet<String>>()
+    fun flag(block: TaskBlock, reason: String) {
+        reasons.getOrPut(block.id) { linkedSetOf() } += reason
+    }
+
+    planned.groupBy { it.date }.forEach { (iso, blocks) ->
+        val date = iso.toDate()
+        val hours = workHours.firstOrNull { it.day == date.dayOfWeek.value }
+            ?: WorkHours.defaults().first { it.day == date.dayOfWeek.value }
+        val workStart = alignUp(hours.start.toMins().coerceIn(0, 1439))
+        val workEnd = alignDown(hours.end.toMins().coerceIn(1, 1440))
+        val busy = calendarBusy[date].orEmpty()
+
+        blocks.forEach { block ->
+            val end = block.startMin + block.durationMin
+            if (!hours.enabled || workEnd <= workStart || block.startMin < workStart || end > workEnd) {
+                flag(block, PlanningConflictReason.WORK_HOURS)
+            }
+            if (busy.any { interval -> block.startMin < interval.endMin && end > interval.startMin }) {
+                flag(block, PlanningConflictReason.CALENDAR)
+            }
+        }
+
+        blocks.forEachIndexed { index, first ->
+            val firstEnd = first.startMin + first.durationMin
+            blocks.drop(index + 1).forEach { second ->
+                val secondEnd = second.startMin + second.durationMin
+                if (first.startMin < secondEnd && firstEnd > second.startMin) {
+                    flag(first, PlanningConflictReason.TASK_BLOCK)
+                    flag(second, PlanningConflictReason.TASK_BLOCK)
+                }
+            }
+        }
+    }
+
+    val byId = planned.associateBy { it.id }
+    return reasons.mapNotNull { (blockId, found) ->
+        val block = byId[blockId] ?: return@mapNotNull null
+        PlanningConflict(
+            blockId = block.id,
+            taskId = block.taskId,
+            date = block.date.toDate(),
+            reasons = found,
+            repairable = block.source == BlockSource.SUGGESTED,
+        )
+    }.sortedWith(compareBy({ it.date }, { byId[it.blockId]?.startMin ?: 0 }, { it.blockId }))
 }
 
 /** Shared capacity contract used by Today and the seven-day planning board. */
