@@ -57,7 +57,15 @@ fun completeTaskWithBlocks(
 ): AppData {
     val before = data.tasks.firstOrNull { it.id == taskId } ?: return data
     val next = completeTask(data, taskId, today)
-    if (before.done) return next
+    if (before.done) {
+        // Un-completing (often an accidental tap) restores the future schedule
+        // that completion skipped. Rollover "Discard" only ever skips expired
+        // blocks, so a skipped block dated after today was skipped here.
+        return next.copy(taskBlocks = next.taskBlocks.map { block ->
+            if (block.taskId != taskId || block.state != BlockState.SKIPPED || block.date <= today.toIso()) block
+            else block.copy(state = BlockState.PLANNED, updatedAt = now)
+        })
+    }
     val cycle = before.takeIf { it.recur != Recur.NONE }?.due
     return next.copy(taskBlocks = next.taskBlocks.map { block ->
         val sameCycle = block.taskId == taskId &&

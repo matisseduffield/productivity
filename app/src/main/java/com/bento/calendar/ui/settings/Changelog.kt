@@ -41,6 +41,17 @@ data class ChangelogEntry(val version: String, val date: String, val changes: Li
 
 val CHANGELOG = listOf(
     ChangelogEntry(
+        "3.4.1", "October 2026",
+        listOf(
+            "Overnight device-calendar events (like 22:00–02:00) now block time on both days, so planning and Schedule Health can see them",
+            "Today, its conflict checks and today's planning keep your device events while you browse distant months or weeks",
+            "The daily planner refreshes its preview as soon as device events finish loading",
+            "Unticking a task you just completed brings back its future planned sessions",
+            "Marking one missed session Done no longer completes the whole task while other sessions are still planned",
+            "Imported calendar events that end at midnight no longer leave an empty sliver on the next day",
+        ),
+    ),
+    ChangelogEntry(
         "3.4.0", "July 2026",
         listOf(
             "New Schedule Health checks planned work against your latest Bento events, device calendars, working hours and other task blocks",

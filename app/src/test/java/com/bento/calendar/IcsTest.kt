@@ -72,6 +72,34 @@ class IcsTest {
     }
 
     @Test
+    fun `timed event ending at midnight imports as a single day without a zero-length segment`() {
+        val text = listOf(
+            "BEGIN:VCALENDAR", "VERSION:2.0",
+            "BEGIN:VEVENT", "UID:late@example.com",
+            "DTSTART:20260713T210000", "DTEND:20260714T000000", "SUMMARY:Late show",
+            "END:VEVENT", "END:VCALENDAR",
+        ).joinToString("\r\n")
+        val event = importEventsFromIcs(text, Cats.DEFAULTS, localZone = ZoneOffset.UTC).events.single()
+        assertEquals("2026-07-13", event.date)
+        assertEquals(null, event.endDate)
+        assertEquals("21:00", event.start)
+        assertEquals("23:59", event.end)
+    }
+
+    @Test
+    fun `multi day timed event ending at midnight ends on the previous day`() {
+        val text = listOf(
+            "BEGIN:VCALENDAR", "VERSION:2.0",
+            "BEGIN:VEVENT", "UID:trip@example.com",
+            "DTSTART:20260713T180000", "DTEND:20260716T000000", "SUMMARY:Trip",
+            "END:VEVENT", "END:VCALENDAR",
+        ).joinToString("\r\n")
+        val event = importEventsFromIcs(text, Cats.DEFAULTS, localZone = ZoneOffset.UTC).events.single()
+        assertEquals("2026-07-15", event.endDate)
+        assertEquals("23:59", event.end)
+    }
+
+    @Test
     fun `third party UID creates a stable id so repeat import is a duplicate`() {
         val text = calendar(
             """BEGIN:VEVENT

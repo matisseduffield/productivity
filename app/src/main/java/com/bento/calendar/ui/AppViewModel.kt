@@ -19,12 +19,14 @@ import com.bento.calendar.data.Cats
 import com.bento.calendar.data.DeviceCal
 import com.bento.calendar.data.DeviceCalendars
 import com.bento.calendar.data.DeviceEvent
+import com.bento.calendar.data.deviceLoadRanges
 import com.bento.calendar.data.EventItem
 import com.bento.calendar.data.FocusSession
 import com.bento.calendar.data.activeFocus
 import com.bento.calendar.data.focusElapsedSeconds
 import com.bento.calendar.data.compactFocusHistory
 import com.bento.calendar.data.IcsImportResult
+import com.bento.calendar.data.completeReviewedBlock
 import com.bento.calendar.data.completeTaskWithBlocks
 import com.bento.calendar.data.exportEventsToIcs
 import com.bento.calendar.data.importEventsFromIcs
@@ -394,6 +396,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         weekAutoPlanOpen = false
         weekRepairBlockIds = emptySet()
         weekPlannerOpen = false
+        // Browsing distant weeks moved the device window; follow the calendar again.
+        maybeRefreshDeviceWindow()
     }
 
     fun openWeekAutoPlan() {
@@ -478,7 +482,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 weekAutoPlanOpen = false
                 weekRepairBlockIds = emptySet()
             }
-            weekPlannerOpen -> weekPlannerOpen = false
+            weekPlannerOpen -> closeWeekPlanner()
             settingsOpen -> settingsOpen = false
             planningOpen -> closePlanner()
         }
@@ -919,6 +923,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             .mapTo(mutableSetOf()) { it.taskId }
         planningTaskIds = planningCandidates(d.tasks, date, unfinished).mapTo(linkedSetOf()) { it.id }
         planningOpen = true
+        // A missing range loads asynchronously and rebuilds the preview.
+        ensureDeviceCalendarRange(date, date)
         rebuildPlanPreview()
     }
 
@@ -929,7 +935,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         planningResult = null
         planningReplaceBlockIds = emptySet()
         planningReturnToWeek = false
-        if (returnToWeek) openWeekPlanner(returnDate)
+        if (returnToWeek) openWeekPlanner(returnDate) else maybeRefreshDeviceWindow()
     }
 
     fun togglePlanningTask(id: String) {
@@ -1180,13 +1186,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 else moveTaskBlock(id, today().plusDays(1), block.startMin)
             }
             "tomorrow" -> moveTaskBlock(id, today().plusDays(1), block.startMin)
-            "complete" -> {
-                val task = data.value?.tasks?.firstOrNull { it.id == block.taskId }
-                if (task != null && !task.done) toggleTask(block.taskId)
-                else mut { d -> d.copy(taskBlocks = d.taskBlocks.map {
-                    if (it.id == id) it.copy(state = BlockState.COMPLETED, updatedAt = System.currentTimeMillis()) else it
-                }) }
-            }
+            "complete" -> mut { completeReviewedBlock(it, id, today()) }
             "skip" -> mut { d -> d.copy(taskBlocks = d.taskBlocks.map {
                 if (it.id == id) it.copy(state = BlockState.SKIPPED, updatedAt = System.currentTimeMillis()) else it
             }) }
@@ -1669,6 +1669,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             deviceLoadGeneration++
             deviceEvents = emptyMap()
             deviceWindow = null
+            deviceRanges = emptyList()
         }
     }
 
@@ -1696,8 +1697,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         refreshDeviceCalendarData()
     }
 
-    /** The date range the current [deviceEvents] map covers (main-thread). */
+    /** The browsing window the current [deviceEvents] map covers (main-thread). */
     private var deviceWindow: Pair<LocalDate, LocalDate>? = null
+
+    /** Every range in [deviceEvents]: [deviceWindow] plus today's pinned week. */
+    private var deviceRanges: List<Pair<LocalDate, LocalDate>> = emptyList()
     private var deviceLoadGeneration: Long = 0
 
     /**
@@ -1716,8 +1720,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Ensure non-calendar overlays (such as Plan Ahead) have device events. */
     fun ensureDeviceCalendarRange(from: LocalDate, to: LocalDate) {
         if (data.value?.prefs?.deviceCalsEnabled != true) return
-        val loaded = deviceWindow
-        if (loaded == null || from < loaded.first || to > loaded.second) {
+        if (deviceRanges.none { (lo, hi) -> from >= lo && to <= hi }) {
             loadDeviceCalendarData(from, to)
         }
     }
@@ -1728,6 +1731,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         forceEnabled: Boolean = false,
     ) {
         val app = getApplication<Application>()
+        val today = today()
         val generation = ++deviceLoadGeneration
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             val pf = data.first { it != null }!!.prefs
@@ -1742,6 +1746,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     if (generation != deviceLoadGeneration) return@withContext
                     deviceEvents = emptyMap()
                     deviceWindow = null
+                    deviceRanges = emptyList()
                 }
                 // Widgets query the overlay themselves in provideGlance —
                 // push so they drop (or pick up) device rows promptly.
@@ -1749,14 +1754,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 return@launch
             }
             val cals = DeviceCalendars.calendars(app)
-            val from = anchorFrom.minusMonths(1)
-            val to = anchorTo.plusMonths(2)
-            val events = DeviceCalendars.eventsBetween(app, from, to, pf.deviceCalIds)
+            val ranges = deviceLoadRanges(anchorFrom, anchorTo, today)
+            val events = ranges.fold(emptyMap<String, List<DeviceEvent>>()) { acc, (from, to) ->
+                acc + DeviceCalendars.eventsBetween(app, from, to, pf.deviceCalIds)
+            }
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                 if (generation != deviceLoadGeneration) return@withContext
                 deviceCals = cals
                 deviceEvents = events
-                deviceWindow = from to to
+                deviceWindow = ranges.first()
+                deviceRanges = ranges
+                // An open day-plan preview was computed without these rows;
+                // rebuild it so Confirm never writes over a device event.
+                if (planningOpen) rebuildPlanPreview()
             }
             WidgetSync.push(app)
         }

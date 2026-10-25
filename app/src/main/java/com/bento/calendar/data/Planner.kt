@@ -129,6 +129,36 @@ fun planningConflicts(
     }.sortedWith(compareBy({ it.date }, { byId[it.blockId]?.startMin ?: 0 }, { it.blockId }))
 }
 
+/**
+ * Rollover "Done" for one expired block. The whole task completes only when
+ * this is the last planned session of its current cycle; otherwise just this
+ * block is marked done, so the task's other sessions are never silently
+ * skipped and a block left over from an earlier recurring cycle cannot
+ * advance the current one.
+ */
+fun completeReviewedBlock(
+    data: AppData,
+    blockId: String,
+    today: LocalDate,
+    now: Long = System.currentTimeMillis(),
+): AppData {
+    val block = data.taskBlocks.firstOrNull { it.id == blockId } ?: return data
+    val task = data.tasks.firstOrNull { it.id == block.taskId }
+    val currentCycle = task != null && (task.recur == Recur.NONE || block.occurrenceKey == task.due)
+    val othersPlanned = data.taskBlocks.any { other ->
+        other.id != block.id && other.taskId == block.taskId && other.state == BlockState.PLANNED &&
+            (task?.recur == Recur.NONE || other.occurrenceKey == block.occurrenceKey)
+    }
+    if (task != null && !task.done && currentCycle && !othersPlanned) {
+        return completeTaskWithBlocks(data, task.id, today, now)
+    }
+    return data.copy(taskBlocks = data.taskBlocks.map {
+        if (it.id == blockId && it.state == BlockState.PLANNED) {
+            it.copy(state = BlockState.COMPLETED, updatedAt = now)
+        } else it
+    })
+}
+
 /** Shared capacity contract used by Today and the seven-day planning board. */
 fun summarizeDayPlan(
     date: LocalDate,

@@ -8,6 +8,8 @@ import android.provider.CalendarContract
 import androidx.core.content.ContextCompat
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.ZoneId
 
 /**
@@ -128,21 +130,67 @@ object DeviceCalendars {
                         loc = c.getString(8) ?: "",
                     )
                     // Fan multi-day instances out to each day they cover.
-                    var d = begin.toLocalDate()
-                    val last = endInst.toLocalDate().let {
-                        // Timed events ending at 00:00 shouldn't claim the next day.
-                        if (!allDay && endInst.hour == 0 && endInst.minute == 0) it.minusDays(1) else it
-                    }.let { if (allDay) it.minusDays(1).coerceAtLeast(d) else it }
-                    while (d <= last && d <= to) {
-                        if (d >= from) {
-                            byDate.getOrPut(d.toString()) { mutableListOf() } +=
-                                if (d == begin.toLocalDate()) ev else ev.copy(date = d.toString())
+                    deviceDaySegments(ev, begin.toLocalDateTime(), endInst.toLocalDateTime(), from, to)
+                        .forEach { segment ->
+                            byDate.getOrPut(segment.date) { mutableListOf() } += segment
                         }
-                        d = d.plusDays(1)
-                    }
                 }
             }
         }
         return byDate.mapValues { (_, v) -> v.sortedBy { it.start } }
     }
+}
+
+/**
+ * Provider ranges for one overlay load: a generous window around what the
+ * caller shows, plus today's week whenever that window misses it. Today, its
+ * conflict checks and today's planning read the same map, so browsing a
+ * distant month or week must not drop today's device events. Each range
+ * returns complete days, so overlapping results merge safely.
+ */
+internal fun deviceLoadRanges(
+    anchorFrom: LocalDate,
+    anchorTo: LocalDate,
+    today: LocalDate,
+): List<Pair<LocalDate, LocalDate>> {
+    val window = anchorFrom.minusMonths(1) to anchorTo.plusMonths(2)
+    val todayWeek = today to today.plusDays(6)
+    val covered = !todayWeek.first.isBefore(window.first) && !todayWeek.second.isAfter(window.second)
+    return if (covered) listOf(window) else listOf(window, todayWeek)
+}
+
+/**
+ * Split one provider instance into the per-day rows Bento renders, clipped to
+ * [from]..[to]. Mirrors [occurrencesOn] for Bento's own multi-day events: the
+ * first day runs start→23:59, days between are all-day and the last day runs
+ * 00:00→end. Copying the raw times onto every day made an overnight
+ * 22:00–02:00 meeting an inverted interval that conflict detection and the
+ * planners could never see.
+ */
+internal fun deviceDaySegments(
+    base: DeviceEvent,
+    begin: LocalDateTime,
+    end: LocalDateTime,
+    from: LocalDate,
+    to: LocalDate,
+): List<DeviceEvent> {
+    val first = begin.toLocalDate()
+    // All-day ends are exclusive midnights; a timed event ending exactly at
+    // 00:00 doesn't claim the next day either.
+    val endsAtMidnight = end.toLocalTime() == LocalTime.MIDNIGHT && end.toLocalDate().isAfter(first)
+    val last = (if (base.allDay || endsAtMidnight) end.toLocalDate().minusDays(1) else end.toLocalDate())
+        .coerceAtLeast(first)
+    val segments = mutableListOf<DeviceEvent>()
+    var d = maxOf(first, from)
+    while (!d.isAfter(last) && !d.isAfter(to)) {
+        val iso = d.toString()
+        segments += when {
+            base.allDay -> base.copy(date = iso)
+            d == first -> base.copy(date = iso, end = if (d == last && !endsAtMidnight) base.end else "23:59")
+            d == last && !endsAtMidnight -> base.copy(date = iso, start = "00:00")
+            else -> base.copy(date = iso, start = "00:00", end = "23:59", allDay = true)
+        }
+        d = d.plusDays(1)
+    }
+    return segments
 }

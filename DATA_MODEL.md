@@ -25,7 +25,9 @@ the backup format and supplies safe defaults for old exports.
 
 The device-calendar overlay is deliberately not stored here: only the user's
 enabled calendar ids are persisted. Device events remain read-only and are
-queried from Android's Calendar Provider when needed.
+queried from Android's Calendar Provider when needed. Instances spanning
+midnight split into per-day rows exactly like Bento multi-day events, and
+every load also covers today's week so Today never loses its overlay.
 
 The last Calendar mode is stored as a small preference (`month`, `week`, `day`
 or `agenda`) so the user's working view survives a process restart.
@@ -55,6 +57,11 @@ or `agenda`) so the user's working view survives a process restart.
   default rather than silently inventing persisted data.
 - `TaskBlock` never changes the task deadline. Blocks use 15-minute increments,
   cannot cross midnight and carry a recurring-cycle key when applicable.
+- Completing a task marks its planned blocks completed (today or earlier) or
+  skipped (later). Un-completing it restores those later skipped blocks to
+  planned; rollover review only skips expired blocks, so nothing else revives.
+- Rollover "Done" completes the task only for the last planned block of its
+  current cycle; otherwise it marks just that block completed.
 - Suggested blocks remain transient until the user confirms the plan.
 - Replanning may replace only future `suggested` blocks for the target day;
   manual, completed, skipped and already-past blocks are immutable inputs.

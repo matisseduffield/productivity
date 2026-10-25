@@ -255,7 +255,17 @@ private fun decodeEvent(
         val begins = LocalDateTime.of(start.date, startTime)
         val finishes = LocalDateTime.of(endStamp.date, finishTime)
         if (!finishes.isAfter(begins)) return null
-        Triple(endStamp.date.takeIf { it.isAfter(start.date) }, finishTime, false)
+        // Ending exactly at midnight means the previous day ran to its end;
+        // keeping "00:00" on the next day would add a zero-length segment.
+        val endsAtMidnight = finishTime == LocalTime.MIDNIGHT && endStamp.date.isAfter(start.date)
+        val lastDay = if (endsAtMidnight) endStamp.date.minusDays(1) else endStamp.date
+        val lastTime = if (endsAtMidnight) LocalTime.of(23, 59) else finishTime
+        if (lastDay == start.date && !lastTime.isAfter(startTime)) {
+            // 23:59→00:00 has no room on its own day; keep the raw span.
+            Triple(endStamp.date, finishTime, false)
+        } else {
+            Triple(lastDay.takeIf { it.isAfter(start.date) }, lastTime, false)
+        }
     }
 
     val recurrenceId = first("RECURRENCE-ID")?.value.orEmpty()

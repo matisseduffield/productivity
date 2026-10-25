@@ -13,6 +13,7 @@ import com.bento.calendar.data.planningConflicts
 import com.bento.calendar.data.suggestDayPlan
 import com.bento.calendar.data.suggestWeekPlan
 import com.bento.calendar.data.summarizeDayPlan
+import com.bento.calendar.data.completeReviewedBlock
 import com.bento.calendar.data.completeTaskWithBlocks
 import com.bento.calendar.data.AppData
 import com.bento.calendar.data.Recur
@@ -303,5 +304,54 @@ class PlannerTest {
         val result = completeTaskWithBlocks(AppData(tasks = listOf(task), taskBlocks = listOf(current, next)), "t", day)
         assertEquals(BlockState.COMPLETED, result.taskBlocks[0].state)
         assertEquals(BlockState.PLANNED, result.taskBlocks[1].state)
+    }
+
+    @Test fun `un-completing a task restores the future blocks completion skipped`() {
+        val past = TaskBlock("p", "t", date = day.minusDays(1).toString(), startMin = 540, durationMin = 30)
+        val future = TaskBlock("f", "t", date = day.plusDays(2).toString(), startMin = 540, durationMin = 30)
+        val other = TaskBlock("o", "x", date = day.plusDays(2).toString(), startMin = 600, durationMin = 30, state = BlockState.SKIPPED)
+        val start = AppData(tasks = listOf(TaskItem("t", "Task"), TaskItem("x", "Other")), taskBlocks = listOf(past, future, other))
+        val completed = completeTaskWithBlocks(start, "t", day, now = 1)
+        assertEquals(BlockState.SKIPPED, completed.taskBlocks.first { it.id == "f" }.state)
+
+        val reopened = completeTaskWithBlocks(completed, "t", day, now = 2)
+        assertEquals(false, reopened.tasks.first { it.id == "t" }.done)
+        assertEquals(BlockState.PLANNED, reopened.taskBlocks.first { it.id == "f" }.state)
+        // History and other tasks' decisions stay untouched.
+        assertEquals(BlockState.COMPLETED, reopened.taskBlocks.first { it.id == "p" }.state)
+        assertEquals(BlockState.SKIPPED, reopened.taskBlocks.first { it.id == "o" }.state)
+    }
+
+    @Test fun `un-completing never revives blocks discarded during rollover review`() {
+        val discarded = TaskBlock("d", "t", date = day.toString(), startMin = 540, durationMin = 30, state = BlockState.SKIPPED)
+        val data = AppData(tasks = listOf(TaskItem("t", "Task", done = true)), taskBlocks = listOf(discarded))
+        val reopened = completeTaskWithBlocks(data, "t", day)
+        assertEquals(BlockState.SKIPPED, reopened.taskBlocks.single().state)
+    }
+
+    @Test fun `reviewing one block done keeps the task open while other sessions remain`() {
+        val expired = TaskBlock("e", "t", date = day.minusDays(1).toString(), startMin = 540, durationMin = 60)
+        val upcoming = TaskBlock("u", "t", date = day.plusDays(1).toString(), startMin = 540, durationMin = 60)
+        val data = AppData(tasks = listOf(TaskItem("t", "Essay", estimateMin = 120)), taskBlocks = listOf(expired, upcoming))
+        val result = completeReviewedBlock(data, "e", day, now = 5)
+        assertEquals(false, result.tasks.single().done)
+        assertEquals(BlockState.COMPLETED, result.taskBlocks.first { it.id == "e" }.state)
+        assertEquals(BlockState.PLANNED, result.taskBlocks.first { it.id == "u" }.state)
+    }
+
+    @Test fun `reviewing the last planned block done completes the task`() {
+        val expired = TaskBlock("e", "t", date = day.minusDays(1).toString(), startMin = 540, durationMin = 60)
+        val data = AppData(tasks = listOf(TaskItem("t", "Essay")), taskBlocks = listOf(expired))
+        val result = completeReviewedBlock(data, "e", day)
+        assertTrue(result.tasks.single().done)
+        assertEquals(BlockState.COMPLETED, result.taskBlocks.single().state)
+    }
+
+    @Test fun `a block from an earlier recurring cycle never advances the current cycle`() {
+        val task = TaskItem("t", "Weekly", due = day.toString(), recur = Recur.WEEKLY)
+        val stale = TaskBlock("s", "t", day.minusWeeks(1).toString(), day.minusWeeks(1).toString(), 540, 30)
+        val result = completeReviewedBlock(AppData(tasks = listOf(task), taskBlocks = listOf(stale)), "s", day)
+        assertEquals(day.toString(), result.tasks.single().due)
+        assertEquals(BlockState.COMPLETED, result.taskBlocks.single().state)
     }
 }
