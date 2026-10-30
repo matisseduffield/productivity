@@ -253,9 +253,12 @@ interface DomainDao {
         FocusDailyTotalRecord::class,
     ],
     version = 1,
-    // Schema evolution is covered by explicit migration tests. Room 2.8's
-    // schema exporter is incompatible with this project's serialization
-    // compiler/runtime combination on repeated KSP builds.
+    // No migrations exist yet: new model fields live inside the JSON payload
+    // columns with safe defaults, so they never change this schema. The first
+    // real schema change needs a Migration plus a test (room-testing is
+    // already a dependency). Room 2.8's schema exporter is incompatible with
+    // this project's serialization compiler/runtime combination on repeated
+    // KSP builds.
     exportSchema = false,
 )
 abstract class BentoDatabase : RoomDatabase() {

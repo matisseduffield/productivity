@@ -1,5 +1,6 @@
 package com.bento.calendar.ui.settings
 
+import android.content.Intent
 import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -33,6 +34,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -41,6 +43,7 @@ import androidx.compose.ui.unit.sp
 import com.bento.calendar.data.Accents
 import com.bento.calendar.BuildConfig
 import com.bento.calendar.data.AppData
+import com.bento.calendar.reminders.ReminderHealth
 import com.bento.calendar.ui.AppViewModel
 import com.bento.calendar.ui.Fmt
 import com.bento.calendar.ui.Arm
@@ -242,6 +245,10 @@ fun SettingsOverlay(
                         }
                     }
                 }
+
+                // ---- Reminders ----
+                SectionLabel("Reminders")
+                ReminderHealthCard(now)
 
                 // ---- Calendar ----
                 SectionLabel("Calendar")
@@ -654,6 +661,60 @@ private fun SettingsRow(
             )
         }
         control()
+    }
+}
+
+/**
+ * Live check of what decides whether reminders arrive on time, with a direct
+ * link to the system screen that fixes each problem. Battery makers such as
+ * Oppo stop background apps aggressively, so the battery row always offers
+ * a way to reach Unrestricted.
+ */
+@Composable
+private fun ReminderHealthCard(now: LocalDateTime) {
+    val context = LocalContext.current
+    // `now` ticks every 15 s and on resume, so coming back from system
+    // settings refreshes these without a lifecycle observer.
+    val health = remember(now) { ReminderHealth.read(context) }
+    fun open(intent: Intent?) {
+        runCatching { context.startActivity(intent ?: ReminderHealth.appDetails(context)) }
+            .onFailure { runCatching { context.startActivity(ReminderHealth.appDetails(context)) } }
+    }
+    SettingsCard {
+        SettingsRow(
+            icon = BentoIcons.Bell,
+            title = "Notifications",
+            sub = if (health.notifications) "On" else "Off · reminders can't appear",
+            danger = !health.notifications,
+        ) {
+            if (!health.notifications) TextLink("Fix", onClick = { open(ReminderHealth.notificationSettings(context)) })
+        }
+        SettingsRow(
+            icon = BentoIcons.Clock,
+            title = "Exact timing",
+            sub = if (health.exactAlarms) "Reminders fire on the minute" else "Off · may arrive up to 10 min late",
+            danger = !health.exactAlarms,
+        ) {
+            if (!health.exactAlarms) TextLink("Fix", onClick = { open(ReminderHealth.exactAlarmSettings(context)) })
+        }
+        SettingsRow(
+            icon = BentoIcons.Sliders,
+            title = "Battery",
+            sub = when {
+                health.backgroundRestricted -> "Restricted · reminders may not arrive"
+                health.unrestrictedBattery -> "Unrestricted"
+                else -> "Optimised · pick Unrestricted if late"
+            },
+            last = true,
+            danger = health.backgroundRestricted,
+        ) {
+            if (!health.unrestrictedBattery) {
+                TextLink(
+                    if (health.backgroundRestricted) "Fix" else "Open",
+                    onClick = { open(ReminderHealth.appDetails(context)) },
+                )
+            }
+        }
     }
 }
 

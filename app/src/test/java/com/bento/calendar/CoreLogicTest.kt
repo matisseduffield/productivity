@@ -307,15 +307,41 @@ class RecurringTaskTest {
 
     @Test
     fun `monthly task due jan 31 clamps to feb 28`() {
-        // Documents the end-of-month behavior: completeTask advances via
-        // LocalDate.plusMonths, which CLAMPS to the last valid day of the
-        // target month (2026-01-31 -> 2026-02-28), and the task stays on the
-        // 28th thereafter. Contrast with monthly EVENTS (occursOn), which
-        // keep the literal day-of-month and simply skip months without it.
+        // Tasks clamp to the last day of a short month (2026-01-31 ->
+        // 2026-02-28) and remember the 31st in recurDay. Contrast with
+        // monthly EVENTS (occursOn), which skip months without that day.
         val d = data(TaskItem(id = "a", title = "a", due = "2026-01-31", recur = Recur.MONTHLY))
         val out = com.bento.calendar.data.completeTask(d, "a", LocalDate.parse("2026-01-31"))
         assertFalse(out.tasks[0].done)
         assertEquals("2026-02-28", out.tasks[0].due)
+        assertEquals(31, out.tasks[0].recurDay)
+    }
+
+    @Test
+    fun `monthly task returns to the 31st after a short month`() {
+        var d = data(TaskItem(id = "a", title = "a", due = "2026-01-31", recur = Recur.MONTHLY, recurDay = 31))
+        val dues = (1..4).map {
+            d = com.bento.calendar.data.completeTask(d, "a", LocalDate.parse("2026-01-01"))
+            d.tasks[0].due
+        }
+        assertEquals(listOf("2026-02-28", "2026-03-31", "2026-04-30", "2026-05-31"), dues)
+    }
+
+    @Test
+    fun `overdue monthly task moves to its next real date`() {
+        val task = TaskItem(id = "a", title = "a", due = "2026-06-15", recur = Recur.MONTHLY, recurDay = 15)
+        assertEquals("2026-07-15", com.bento.calendar.data.completeTask(data(task), "a", today).tasks[0].due)
+        val later = LocalDate.parse("2026-07-20")
+        assertEquals("2026-08-15", com.bento.calendar.data.completeTask(data(task), "a", later).tasks[0].due)
+    }
+
+    @Test
+    fun `saving keeps a clamped monthly day unless the due date changes`() {
+        val stored = TaskItem(id = "a", title = "a", due = "2026-02-28", recur = Recur.MONTHLY, recurDay = 31)
+        assertEquals(31, com.bento.calendar.data.monthlyRecurDay(stored, Recur.MONTHLY, LocalDate.parse("2026-02-28")))
+        assertEquals(10, com.bento.calendar.data.monthlyRecurDay(stored, Recur.MONTHLY, LocalDate.parse("2026-03-10")))
+        assertNull(com.bento.calendar.data.monthlyRecurDay(stored, Recur.WEEKLY, LocalDate.parse("2026-02-28")))
+        assertEquals(31, com.bento.calendar.data.monthlyRecurDay(null, Recur.MONTHLY, LocalDate.parse("2026-01-31")))
     }
 }
 

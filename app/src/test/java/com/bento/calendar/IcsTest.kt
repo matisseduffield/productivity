@@ -87,6 +87,26 @@ class IcsTest {
     }
 
     @Test
+    fun `unsupported repeat rules are counted instead of silently flattened`() {
+        fun vevent(uid: String, rule: String?) = listOfNotNull(
+            "BEGIN:VEVENT", "UID:$uid", "DTSTART:20260713T090000", "DTEND:20260713T100000",
+            "SUMMARY:$uid", rule?.let { "RRULE:$it" }, "END:VEVENT",
+        )
+        val text = (
+            listOf("BEGIN:VCALENDAR", "VERSION:2.0") +
+                vevent("birthday", "FREQ=YEARLY") +
+                vevent("fortnightly", "FREQ=WEEKLY;INTERVAL=2") +
+                vevent("weekly", "FREQ=WEEKLY") +
+                vevent("once", null) +
+                listOf("END:VCALENDAR")
+            ).joinToString("\r\n")
+        val result = importEventsFromIcs(text, Cats.DEFAULTS, localZone = ZoneOffset.UTC)
+        assertEquals(4, result.events.size)
+        assertEquals(2, result.flattenedRepeats)
+        assertEquals(Recur.WEEKLY, result.events.first { it.title == "weekly" }.recur)
+    }
+
+    @Test
     fun `multi day timed event ending at midnight ends on the previous day`() {
         val text = listOf(
             "BEGIN:VCALENDAR", "VERSION:2.0",

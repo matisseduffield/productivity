@@ -36,17 +36,49 @@ fun completeTask(data: AppData, taskId: String, today: LocalDate): AppData =
                 t.copy(done = !t.done)
             } else {
                 val anchor = t.due?.toDate()?.takeIf { !it.isBefore(today) } ?: today
+                // Older monthly tasks have no stored day: adopt the current
+                // due day once so later short months can't erode it.
+                val monthDay = t.recurDay ?: t.due?.toDate()?.dayOfMonth ?: anchor.dayOfMonth
                 val next = when (t.recur) {
                     Recur.DAILY -> anchor.plusDays(1)
                     Recur.WEEKLY -> anchor.plusWeeks(1)
-                    Recur.MONTHLY -> anchor.plusMonths(1)
+                    Recur.MONTHLY -> nextMonthlyDue(anchor, monthDay)
                     else -> anchor
                 }
                 // The next occurrence starts with a fresh checklist.
-                t.copy(due = next.toIso(), subs = t.subs.map { it.copy(done = false) })
+                t.copy(
+                    due = next.toIso(),
+                    subs = t.subs.map { it.copy(done = false) },
+                    recurDay = if (t.recur == Recur.MONTHLY) monthDay else t.recurDay,
+                )
             }
         },
     )
+
+/**
+ * First date strictly after [after] falling on [day] of its month, clamped to
+ * the month's last day. Clamping uses the stored day rather than the previous
+ * due date, so Jan 31 → Feb 28 → Mar 31 instead of drifting to the 28th.
+ */
+fun nextMonthlyDue(after: LocalDate, day: Int): LocalDate {
+    val wanted = day.coerceIn(1, 31)
+    val thisMonth = after.withDayOfMonth(minOf(wanted, after.lengthOfMonth()))
+    if (thisMonth.isAfter(after)) return thisMonth
+    val nextMonth = after.plusMonths(1)
+    return nextMonth.withDayOfMonth(minOf(wanted, nextMonth.lengthOfMonth()))
+}
+
+/**
+ * [TaskItem.recurDay] for a saved task. Picking a new due date sets the day;
+ * re-saving with the same (possibly clamped) due date keeps the stored one,
+ * so editing a Feb 28 occurrence of a 31st task doesn't move it to the 28th.
+ */
+fun monthlyRecurDay(previous: TaskItem?, recur: String, due: LocalDate?): Int? = when {
+    recur != Recur.MONTHLY -> null
+    due == null -> previous?.recurDay
+    previous?.recur == Recur.MONTHLY && previous.due == due.toIso() -> previous.recurDay ?: due.dayOfMonth
+    else -> due.dayOfMonth
+}
 
 /** Completion plus the planner lifecycle for every block in this task cycle. */
 fun completeTaskWithBlocks(

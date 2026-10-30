@@ -19,6 +19,12 @@ data class IcsImportResult(
     val skipped: Int,
     val sourceEvents: Int,
     val validCalendar: Boolean,
+    /**
+     * Imported events whose repeat rule Bento can't express yet (yearly,
+     * intervals, end dates, several weekdays). Only the first occurrence is
+     * kept, so the import message says so instead of failing silently.
+     */
+    val flattenedRepeats: Int = 0,
 )
 
 private data class IcsProperty(
@@ -39,6 +45,7 @@ private data class DecodedIcsBlock(
     val uid: String,
     val recurrenceDate: LocalDate?,
     val cancelled: Boolean,
+    val flattened: Boolean = false,
 )
 
 private val DATE_FMT = DateTimeFormatter.BASIC_ISO_DATE
@@ -166,7 +173,11 @@ fun importEventsFromIcs(
         val event = if (cancelled) null else {
             runCatching { decodeEvent(properties, categories, localZone, block) }.getOrNull()
         }
-        DecodedIcsBlock(event, uid, recurrenceDate, cancelled)
+        val hasRule = properties.any { it.name == "RRULE" && it.value.isNotBlank() }
+        DecodedIcsBlock(
+            event, uid, recurrenceDate, cancelled,
+            flattened = hasRule && recurrenceDate == null && event?.recur == Recur.NONE,
+        )
     }
 
     // Google Calendar and Outlook represent a changed/cancelled occurrence as
@@ -185,6 +196,7 @@ fun importEventsFromIcs(
     val seen = existingIds.toMutableSet()
     var duplicates = 0
     var skipped = 0
+    var flattened = 0
     for (item in decoded) {
         if (item.cancelled) {
             // A cancellation is meaningful only when its base series is in
@@ -210,6 +222,7 @@ fun importEventsFromIcs(
             duplicates++
         } else {
             imported += event
+            if (item.flattened) flattened++
         }
     }
 
@@ -219,6 +232,7 @@ fun importEventsFromIcs(
         skipped = skipped,
         sourceEvents = blocks.size,
         validCalendar = true,
+        flattenedRepeats = flattened,
     )
 }
 

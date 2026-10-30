@@ -41,6 +41,18 @@ data class ChangelogEntry(val version: String, val date: String, val changes: Li
 
 val CHANGELOG = listOf(
     ChangelogEntry(
+        "3.4.2", "October 2026",
+        listOf(
+            "Monthly tasks keep their day: a task on the 31st goes to Feb 28 and back to Mar 31 instead of sticking on the 28th",
+            "An overdue monthly task now moves to its next real date rather than a month from today",
+            "Replanning a day now replaces its earlier auto-suggestions instead of sometimes leaving duplicates",
+            "Confirming a daily plan rechecks your calendars and the time, so it never saves a block that now clashes or has already passed",
+            "Ticking a session done on the Daily Plan widget no longer counts it as focused time in Insights",
+            "Calendar imports now say when a repeating event was added as a single date",
+            "New Reminders section in Settings checks notifications, exact timing and battery, with a link to fix each one",
+        ),
+    ),
+    ChangelogEntry(
         "3.4.1", "October 2026",
         listOf(
             "Overnight device-calendar events (like 22:00–02:00) now block time on both days, so planning and Schedule Health can see them",

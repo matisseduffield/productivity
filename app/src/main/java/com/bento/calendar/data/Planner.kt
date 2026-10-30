@@ -159,6 +159,42 @@ fun completeReviewedBlock(
     })
 }
 
+/**
+ * Commit-time check for a reviewed day plan. Keeps, in order, only the
+ * suggestions that still fit: open task, inside working hours, not before
+ * [notBeforeMin], and clear of calendar commitments, retained blocks and
+ * suggestions already kept. The result is a subset of what the user
+ * reviewed — nothing is moved or added.
+ */
+fun stillValidDaySuggestions(
+    suggestions: List<PlanSuggestion>,
+    openTaskIds: Set<String>,
+    retainedBlocks: List<TaskBlock>,
+    calendarBusy: List<BusyInterval>,
+    workHours: WorkHours,
+    notBeforeMin: Int?,
+): List<PlanSuggestion> {
+    if (!workHours.enabled) return emptyList()
+    val workStart = alignUp(workHours.start.toMins().coerceIn(0, 1439))
+    val workEnd = alignDown(workHours.end.toMins().coerceIn(1, 1440))
+    val kept = mutableListOf<PlanSuggestion>()
+    suggestions.forEach { s ->
+        val iso = s.date.toIso()
+        val end = s.startMin + s.durationMin
+        val overlaps = { start: Int, finish: Int -> s.startMin < finish && end > start }
+        val fits = s.taskId in openTaskIds && s.durationMin >= PLAN_GRID_MIN &&
+            s.startMin >= workStart && end <= workEnd &&
+            (notBeforeMin == null || s.startMin >= notBeforeMin) &&
+            calendarBusy.none { overlaps(it.startMin, it.endMin) } &&
+            retainedBlocks.none {
+                it.date == iso && it.state == BlockState.PLANNED && overlaps(it.startMin, it.startMin + it.durationMin)
+            } &&
+            kept.none { it.date == s.date && overlaps(it.startMin, it.startMin + it.durationMin) }
+        if (fits) kept += s
+    }
+    return kept
+}
+
 /** Shared capacity contract used by Today and the seven-day planning board. */
 fun summarizeDayPlan(
     date: LocalDate,

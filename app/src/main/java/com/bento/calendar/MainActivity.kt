@@ -111,6 +111,11 @@ class MainActivity : FragmentActivity() {
                         if (result.events.size != 1) append('s')
                         if (result.duplicates > 0) append(" · ${result.duplicates} already there")
                         if (result.skipped > 0) append(" · ${result.skipped} skipped")
+                        if (result.flattenedRepeats > 0) {
+                            append(" · ${result.flattenedRepeats} repeating ")
+                            append(if (result.flattenedRepeats == 1) "event" else "events")
+                            append(" added as a single date (repeat type not supported yet)")
+                        }
                     }
                     result.duplicates > 0 && result.skipped == 0 -> "Those events are already imported"
                     result.sourceEvents == 0 -> "No events in that calendar file"

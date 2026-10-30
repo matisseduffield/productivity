@@ -95,9 +95,10 @@ class CompletePlanBlockAction : ActionCallback {
         val now = System.currentTimeMillis()
         val updated = AppGraph.repository(context).update { data ->
             data.copy(taskBlocks = data.taskBlocks.map { block ->
+                // actualMinutes stays as recorded: it means focused time, and
+                // a widget tick says the work is done, not how long it took.
                 if (block.id != blockId || block.state != BlockState.PLANNED) block else block.copy(
                     state = BlockState.COMPLETED,
-                    actualMinutes = block.actualMinutes ?: block.durationMin,
                     updatedAt = now,
                 )
             })

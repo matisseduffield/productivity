@@ -98,6 +98,12 @@ data class TaskItem(
     val remindAt: String? = null,
     /** Remaining expected effort; null means the planner uses its visible default. */
     val estimateMin: Int? = null,
+    /**
+     * Day of month (1–31) a monthly task repeats on. Short months clamp to
+     * their last day without losing it, so the 31st never drifts to the 28th.
+     * Null for older stores: the current due day is used instead.
+     */
+    val recurDay: Int? = null,
 )
 
 @Serializable

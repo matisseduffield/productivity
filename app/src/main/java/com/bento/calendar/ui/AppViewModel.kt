@@ -28,6 +28,7 @@ import com.bento.calendar.data.compactFocusHistory
 import com.bento.calendar.data.IcsImportResult
 import com.bento.calendar.data.completeReviewedBlock
 import com.bento.calendar.data.completeTaskWithBlocks
+import com.bento.calendar.data.monthlyRecurDay
 import com.bento.calendar.data.exportEventsToIcs
 import com.bento.calendar.data.importEventsFromIcs
 import com.bento.calendar.data.NoteItem
@@ -46,6 +47,7 @@ import com.bento.calendar.data.parseQuickAdd
 import com.bento.calendar.data.occurrencesOn
 import com.bento.calendar.data.planningCandidates
 import com.bento.calendar.data.planningConflicts
+import com.bento.calendar.data.stillValidDaySuggestions
 import com.bento.calendar.data.suggestDayPlan
 import com.bento.calendar.data.minsToHm
 import com.bento.calendar.data.newId
@@ -868,6 +870,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // A reminder is a time on the due date — meaningless without one.
                 remindAt = if (d.due != null) d.remindAt else null,
                 estimateMin = d.estimateMin?.coerceIn(15, 24 * 60),
+                recurDay = monthlyRecurDay(x.tasks.getOrNull(i), d.recur, d.due),
             )
             if (i >= 0) {
                 x.copy(tasks = x.tasks.toMutableList().apply { set(i, rec) })
@@ -981,9 +984,38 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val result = planningResult ?: return
         val date = planningDate
         val now = System.currentTimeMillis()
+        // Capture before closePlanner() clears them: mut's transform runs
+        // only after the repository suspends, by which time they are gone.
+        val replaceIds = planningReplaceBlockIds
+        val current = _now.value
+        val notBefore = if (date == current.toLocalDate()) {
+            ((current.hour * 60 + current.minute + 14) / 15 * 15).coerceAtMost(1439)
+        } else null
+        val deviceBusy = deviceEvents[date.toIso()].orEmpty()
+            .filterNot { it.allDay }
+            .map { BusyInterval(it.start.toMins(), it.end.toMins()) }
         mut { d ->
             val tasksById = d.tasks.associateBy { it.id }
-            val blocks = result.suggestions.map { suggestion ->
+            val retained = d.taskBlocks.filterNot { existing ->
+                existing.id in replaceIds &&
+                    existing.date == date.toIso() &&
+                    existing.state == BlockState.PLANNED &&
+                    existing.source == BlockSource.SUGGESTED
+            }
+            val hours = d.prefs.workHours.firstOrNull { it.day == date.dayOfWeek.value }
+                ?: com.bento.calendar.data.WorkHours.defaults().first { it.day == date.dayOfWeek.value }
+            // Revalidate against the store as it is now: time may have
+            // passed and calendars may have changed since the preview.
+            val accepted = stillValidDaySuggestions(
+                suggestions = result.suggestions,
+                openTaskIds = d.tasks.filterNot { it.done }.mapTo(hashSetOf()) { it.id },
+                retainedBlocks = retained,
+                calendarBusy = occurrencesOn(d.events, date).filterNot { it.allDay }
+                    .map { BusyInterval(it.start.toMins(), it.end.toMins()) } + deviceBusy,
+                workHours = hours,
+                notBeforeMin = notBefore,
+            )
+            val blocks = accepted.map { suggestion ->
                 val task = tasksById[suggestion.taskId]
                 TaskBlock(
                     id = newId(),
@@ -997,8 +1029,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     updatedAt = now,
                 )
             }
-            val hours = d.prefs.workHours.firstOrNull { it.day == date.dayOfWeek.value }
-                ?: com.bento.calendar.data.WorkHours.defaults().first { it.day == date.dayOfWeek.value }
             val plan = DayPlan(
                 date = date.toIso(),
                 workStartMin = hours.start.toMins(),
@@ -1006,12 +1036,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 plannedAt = now,
             )
             d.copy(
-                taskBlocks = d.taskBlocks.filterNot { existing ->
-                    existing.id in planningReplaceBlockIds &&
-                        existing.date == date.toIso() &&
-                        existing.state == BlockState.PLANNED &&
-                        existing.source == BlockSource.SUGGESTED
-                } + blocks,
+                taskBlocks = retained + blocks,
                 dayPlans = d.dayPlans.filterNot { it.date == plan.date } + plan,
             )
         }
@@ -1292,6 +1317,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 recur = p.recur,
                 priority = p.priority,
                 estimateMin = p.estimateMin,
+                recurDay = monthlyRecurDay(null, p.recur, p.date),
             )
             mut { x -> x.copy(tasks = x.tasks + tk) }
         }
@@ -2302,8 +2328,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     it.copy(recur = recur, endDate = it.copy(recur = recur).spanEnd()?.toIso())
                 },
                 tasks = decoded.tasks.map {
+                    val recur = if (it.recur in knownRecur) it.recur else Recur.NONE
                     it.copy(
-                        recur = if (it.recur in knownRecur) it.recur else Recur.NONE,
+                        recur = recur,
+                        recurDay = it.recurDay?.takeIf { day -> recur == Recur.MONTHLY && day in 1..31 },
                         priority = it.priority.coerceIn(Priority.NONE, Priority.HIGH),
                         // A reminder needs a due date and a parseable time.
                         remindAt = it.remindAt?.takeIf { r ->

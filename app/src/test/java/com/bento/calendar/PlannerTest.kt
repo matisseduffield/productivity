@@ -13,7 +13,9 @@ import com.bento.calendar.data.planningConflicts
 import com.bento.calendar.data.suggestDayPlan
 import com.bento.calendar.data.suggestWeekPlan
 import com.bento.calendar.data.summarizeDayPlan
+import com.bento.calendar.data.PlanSuggestion
 import com.bento.calendar.data.completeReviewedBlock
+import com.bento.calendar.data.stillValidDaySuggestions
 import com.bento.calendar.data.completeTaskWithBlocks
 import com.bento.calendar.data.AppData
 import com.bento.calendar.data.Recur
@@ -345,6 +347,35 @@ class PlannerTest {
         val result = completeReviewedBlock(data, "e", day)
         assertTrue(result.tasks.single().done)
         assertEquals(BlockState.COMPLETED, result.taskBlocks.single().state)
+    }
+
+    @Test fun `confirm keeps only day suggestions that still fit`() {
+        fun s(task: String, start: Int, dur: Int = 30) = PlanSuggestion(task, day, start, dur, false)
+        val kept = stillValidDaySuggestions(
+            suggestions = listOf(
+                s("a", 540), // fits
+                s("b", 600), // a meeting appeared at 10:00
+                s("c", 660), // a manual block now sits here
+                s("done", 720), // task completed meanwhile
+                s("a", 555), // overlaps the kept 09:00 suggestion
+                s("a", 1020), // past the 17:00 end of work
+                s("a", 480), // before work starts
+            ),
+            openTaskIds = setOf("a", "b", "c"),
+            retainedBlocks = listOf(TaskBlock("m", "x", date = day.toString(), startMin = 660, durationMin = 30)),
+            calendarBusy = listOf(BusyInterval(600, 630)),
+            workHours = hours,
+            notBeforeMin = null,
+        )
+        assertEquals(listOf(540), kept.map { it.startMin })
+    }
+
+    @Test fun `confirm drops day suggestions that have already started`() {
+        val kept = stillValidDaySuggestions(
+            listOf(PlanSuggestion("a", day, 540, 30, false), PlanSuggestion("a", day, 600, 30, false)),
+            setOf("a"), emptyList(), emptyList(), hours, notBeforeMin = 570,
+        )
+        assertEquals(listOf(600), kept.map { it.startMin })
     }
 
     @Test fun `a block from an earlier recurring cycle never advances the current cycle`() {

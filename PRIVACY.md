@@ -1,6 +1,6 @@
 # Bento Calendar — Privacy Policy
 
-_Last updated: July 2026_
+_Last updated: October 2026_
 
 Bento Calendar is a personal organizer (calendar, notes, tasks). It is built
 to keep your data yours.
@@ -13,9 +13,16 @@ tracking, and no servers. The app's developer receives no data from you.
 ## Where your data lives
 
 Everything you create — events, tasks, notes, settings, and your notes PIN —
-is stored **only on your device**, in the app's private storage. Backups you
-export are files you choose where to save; they never leave your device
-unless you move them yourself.
+is stored on your device, in the app's private storage. Backups you export
+are files you choose where to save; they never leave your device unless you
+move them yourself.
+
+Bento also takes part in **Android's own backup**. If backup is turned on in
+your phone's settings, Android copies the app's private storage (including
+locked notes and your notes PIN) to your Google account, encrypted, and
+restores it when you install Bento on a new phone. This is handled by
+Android and Google; the app's developer never receives it. You can turn it
+off in your phone's backup settings.
 
 ## Permissions the app uses
 

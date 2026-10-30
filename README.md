@@ -18,7 +18,7 @@ implementation map).
 - Seven-day Plan Ahead board with event-aware capacity, review-before-write auto-planning and safe repair when calendars or work hours change
 - Private productivity insights: focus trends, follow-through, streaks and category breakdowns
 - Widgets (including Daily Plan), biometric app/note unlock, recurring tasks, custom categories, soft-delete trash
-- All data stays on-device: Room for domain records and DataStore for preferences/security settings
+- No accounts or servers: Room for domain records and DataStore for preferences/security settings, carried to a new phone by Android's Google backup (kept on deliberately)
 
 The persisted schema and mutation invariants are documented in
 [`DATA_MODEL.md`](DATA_MODEL.md).

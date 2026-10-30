@@ -53,6 +53,10 @@ or `agenda`) so the user's working view survives a process restart.
 - Checklist step ids are stable inside the task.
 - Completing a recurring task advances its due date and resets its checklist
   instead of marking it permanently complete.
+- Monthly tasks store `recurDay` (1–31). The next due date is the first date
+  after the anchor on that day, clamped to short months, so the 31st becomes
+  Feb 28 and then Mar 31 again. Older tasks adopt their current due day on
+  their next completion; re-saving with an unchanged due date keeps the day.
 - `estimateMin` is remaining expected effort; null uses the visible planner
   default rather than silently inventing persisted data.
 - `TaskBlock` never changes the task deadline. Blocks use 15-minute increments,
@@ -92,6 +96,11 @@ Locked notes use the app's four-digit PIN gate, optionally substituted by
 Android biometric/device authentication. This is access control, not database
 encryption. JSON backup exports intentionally omit the PIN but include note
 content (including locked notes), which Settings states explicitly.
+
+Android Auto Backup is deliberately left on (`allowBackup="true"`, default
+rules): the Room database and DataStore travel to the user's Google backup
+and restore on a new phone. Keep new persisted data restorable on another
+device — never store device-bound ids or keys in these files.
 
 ## Mutation pipeline
 
