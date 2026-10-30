@@ -55,6 +55,7 @@ import com.bento.calendar.ui.components.Dot
 import com.bento.calendar.ui.components.FieldLabel
 import com.bento.calendar.ui.components.GBtn
 import com.bento.calendar.ui.components.PrimaryButton
+import com.bento.calendar.ui.components.QuietTextButton
 import com.bento.calendar.ui.components.TextLink
 import com.bento.calendar.ui.components.pressable
 import com.bento.calendar.ui.theme.BentoIcons
@@ -235,12 +236,9 @@ fun TaskEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
             FieldLabel("Repeat")
             BentoSelectField(
                 value = d.recur,
-                options = listOf(
-                    "Doesn't repeat" to Recur.NONE,
-                    "Daily" to Recur.DAILY,
-                    "Weekly" to Recur.WEEKLY,
-                    "Monthly" to Recur.MONTHLY,
-                ),
+                options = Recur.ALL.map { r ->
+                    (if (r == Recur.NONE) "Doesn't repeat" else Recur.label(r)) to r
+                },
                 onSelect = { v -> vm.updateTaskDraft { it.copy(recur = v) } },
             )
             if (d.recur != Recur.NONE && d.due == null) {
@@ -315,13 +313,14 @@ fun TaskEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                     keyboardActions = KeyboardActions(onDone = { addStep() }),
                 )
-                GBtn(onClick = addStep) {
+                GBtn(onClick = addStep, label = "Add step") {
                     Icon(BentoIcons.PlusLight, null, tint = c.sub, modifier = Modifier.size(16.dp))
                 }
             }
         }
         PrimaryButton("Save task", onClick = saveWithPendingStep)
         if (d.id != null) {
+            QuietTextButton("Duplicate", onClick = vm::duplicateTaskDraft)
             DangerTextButton(
                 if (vm.isArmed(Arm.TASK)) "Tap again to delete" else "Delete task",
                 onClick = vm::deleteTask,

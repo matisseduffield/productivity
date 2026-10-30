@@ -14,7 +14,10 @@ the backup format and supplies safe defaults for old exports.
 - `tasks`: tasks, recurrence, priorities, checklist steps and due reminders.
 - `notes`: note text, pin/lock state and optional tile colour.
 - `prefs`: appearance, calendar, privacy and integration settings.
-- `pin`: the notes PIN. It remains on device and is stripped from JSON exports.
+- `pin`: the notes PIN as a salted PBKDF2 hash (`pbkdf2-sha256$iter$salt$hash`).
+  Pre-3.5 stores held the plain digits; they still verify and are re-saved
+  hashed on the next launch. Stripped from JSON exports; a restore keeps the
+  phone's current PIN.
 - `categories`: user-editable category ids, labels and colours.
 - `trash`: restorable event/task/note snapshots, capped at 200 entries and
   retained for 30 days.
@@ -39,8 +42,14 @@ or `agenda`) so the user's working view survives a process restart.
 - An all-day event uses `00:00` to `23:59`.
 - `endDate` is the inclusive final day of a multi-day event. Multi-day events
   cannot recur.
-- Recurrence is expanded at read time. Daily, weekly and monthly series keep
-  one base event; `exDates` removes individual occurrences.
+- Recurrence is expanded at read time. `recur` is one of `none`, `daily`,
+  `weekdays` (Mon–Fri), `weekly`, `fortnightly`, `monthly` or `yearly`; each
+  series keeps one base event and `exDates` removes individual occurrences.
+- `recurUntil` is the inclusive last date a series may occur on (null =
+  forever). "This & later" edits and deletes end the original series the day
+  before the tapped occurrence; an edit starts a new series there.
+- `.ics` `COUNT` rules are converted to the date of the last counted
+  occurrence; `UNTIL` maps to `recurUntil`.
 - Editing one occurrence adds its date to the series' `exDates` and creates a
   standalone event containing the edit.
 - `.ics` import is additive. Imported ids are stable (Bento id or calendar
@@ -94,13 +103,20 @@ or `agenda`) so the user's working view survives a process restart.
 
 Locked notes use the app's four-digit PIN gate, optionally substituted by
 Android biometric/device authentication. This is access control, not database
-encryption. JSON backup exports intentionally omit the PIN but include note
+encryption. Wrong PINs back off after five tries (30 s, doubling, capped at
+15 min); unlocked notes lock again after a minute away. JSON backup exports intentionally omit the PIN but include note
 content (including locked notes), which Settings states explicitly.
 
 Android Auto Backup is deliberately left on (`allowBackup="true"`, default
 rules): the Room database and DataStore travel to the user's Google backup
 and restore on a new phone. Keep new persisted data restorable on another
-device — never store device-bound ids or keys in these files.
+device — never store device-bound ids or keys in these files. The one
+exception is `prefs.autoBackupFolder`, a folder permission that only works on
+the phone that granted it; backup restores keep the current phone's value.
+
+The optional daily backup writes `bento-backup-YYYY-MM-DD.json` (the same
+format as a manual export) into that folder at most once a day and deletes
+only matching dated files beyond the newest seven.
 
 ## Mutation pipeline
 
@@ -112,7 +128,12 @@ prior projections:
 1. Event/task/block changes reschedule the single reminder chain.
 2. Event/task/block or widget-visible preference changes refresh Glance widgets.
 3. Note-editor keystrokes and unrelated preference writes avoid those costly
-   side effects.
+   side effects. Note typing is buffered for 400 ms and flushed on close or
+   when the app stops.
+
+Events, tasks, notes, task blocks and focus sessions are written row by row:
+only rows whose content or position changed are rewritten, and removed ids
+are deleted.
 
 Deletes first snapshot the item into `trash`; Undo removes that trash snapshot
 while restoring the original list position. Importing a full JSON backup is

@@ -87,6 +87,11 @@ import com.bento.calendar.ui.theme.LocalBento
 import com.bento.calendar.ui.theme.color
 import java.time.Instant
 import java.time.LocalDate
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import java.time.LocalTime
 import java.time.ZoneOffset
 import kotlin.math.abs
@@ -132,6 +137,8 @@ fun GBtn(
     modifier: Modifier = Modifier,
     primary: Boolean = false,
     size: Dp = 38.dp,
+    /** Spoken by TalkBack; these buttons only show an icon. */
+    label: String? = null,
     content: @Composable BoxScope.() -> Unit,
 ) {
     val c = LocalBento.current
@@ -141,6 +148,10 @@ fun GBtn(
         modifier = modifier
             .size(size)
             .pressable(onClick = onClick)
+            .semantics {
+                role = Role.Button
+                if (label != null) contentDescription = label
+            }
             .background(bg, CircleShape)
             .border(1.dp, border, CircleShape),
         contentAlignment = Alignment.Center,
@@ -186,6 +197,8 @@ fun BentoCheckbox(
     modifier: Modifier = Modifier,
     size: Dp = 22.dp,
     corner: Dp = 8.dp,
+    /** What is being ticked, for TalkBack ("Buy milk"); it reads the state itself. */
+    label: String? = null,
 ) {
     val c = LocalBento.current
     val haptics = LocalHapticFeedback.current
@@ -204,10 +217,17 @@ fun BentoCheckbox(
                 scaleX = scale.value
                 scaleY = scale.value
             }
-            .tap {
-                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                onToggle()
-            }
+            .toggleable(
+                value = checked,
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                role = Role.Checkbox,
+                onValueChange = {
+                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onToggle()
+                },
+            )
+            .then(if (label != null) Modifier.semantics { contentDescription = label } else Modifier)
             .background(if (checked) c.acc else Color.Transparent, RoundedCornerShape(corner))
             .border(1.5.dp, if (checked) c.acc else c.cbb, RoundedCornerShape(corner)),
         contentAlignment = Alignment.Center,
@@ -225,7 +245,7 @@ fun BentoCheckbox(
 
 /** 46x27 pill switch. */
 @Composable
-fun BentoSwitch(on: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier) {
+fun BentoSwitch(on: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier, label: String? = null) {
     val c = LocalBento.current
     val knobX by animateFloatAsState(if (on) 21f else 4f, tween(200), label = "knob")
     val bg by androidx.compose.animation.animateColorAsState(
@@ -237,7 +257,14 @@ fun BentoSwitch(on: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier
     Box(
         modifier
             .size(46.dp, 27.dp)
-            .tap(onClick = onToggle)
+            .toggleable(
+                value = on,
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                role = Role.Switch,
+                onValueChange = { onToggle() },
+            )
+            .then(if (label != null) Modifier.semantics { contentDescription = label } else Modifier)
             .background(bg, CircleShape)
             .border(1.dp, if (on) c.acc else c.bd, CircleShape),
     ) {
@@ -339,6 +366,22 @@ fun DangerTextButton(text: String, onClick: () -> Unit, modifier: Modifier = Mod
     }
 }
 
+/** Centered secondary action under a sheet's primary button (e.g. Duplicate). */
+@Composable
+fun QuietTextButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val c = LocalBento.current
+    Box(
+        modifier
+            .fillMaxWidth()
+            .padding(top = 13.dp)
+            .tap(onClick = onClick)
+            .semantics { role = Role.Button },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(text, fontSize = 12.5.sp, fontWeight = FontWeight.W700, color = c.sub)
+    }
+}
+
 /** Small bold text link (.scnl / .tchip text). */
 @Composable
 fun TextLink(text: String, onClick: () -> Unit, color: Color? = null, modifier: Modifier = Modifier) {
@@ -348,7 +391,7 @@ fun TextLink(text: String, onClick: () -> Unit, color: Color? = null, modifier: 
         fontSize = 12.5.sp,
         fontWeight = FontWeight.W700,
         color = color ?: c.acc,
-        modifier = modifier.pressable(onClick = onClick),
+        modifier = modifier.pressable(onClick = onClick).semantics { role = Role.Button },
     )
 }
 

@@ -18,10 +18,17 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
@@ -33,6 +40,7 @@ import com.bento.calendar.ui.PinThen
 import com.bento.calendar.ui.components.BentoSheet
 import com.bento.calendar.ui.components.pressable
 import com.bento.calendar.ui.theme.LocalBento
+import kotlinx.coroutines.delay
 
 /**
  * PIN bottom sheet: create ("Create a PIN") or enter ("Enter PIN") flow with
@@ -47,11 +55,13 @@ fun PinSheet(vm: AppViewModel) {
     BentoSheet(onDismiss = vm::pinCancel) {
         // ---- Title + sub (.sh-t / .bt-m) ----
         val title = when {
+            ctx.mode == PinMode.Set && ctx.firstEntry != null -> "Confirm your PIN"
             ctx.mode == PinMode.Set -> "Create a PIN"
             ctx.then is PinThen.ChangePin || ctx.then is PinThen.RemovePin -> "Enter current PIN"
             else -> "Enter PIN"
         }
         val sub = when {
+            ctx.mode == PinMode.Set && ctx.firstEntry != null -> "Enter the same 4 digits again"
             ctx.mode == PinMode.Set -> "Protects your locked notes"
             ctx.then is PinThen.ChangePin -> "Then you'll choose a new one"
             ctx.then is PinThen.RemovePin -> "Locked notes will ask for a new PIN"
@@ -100,7 +110,8 @@ fun PinSheet(vm: AppViewModel) {
             Modifier
                 .fillMaxWidth()
                 .padding(top = 18.dp, bottom = 2.dp)
-                .offset { IntOffset(shake.value.dp.roundToPx(), 0) },
+                .offset { IntOffset(shake.value.dp.roundToPx(), 0) }
+                .semantics { contentDescription = "${vm.pinBuf.length} of 4 digits entered" },
             horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
         ) {
             repeat(4) { i ->
@@ -122,9 +133,26 @@ fun PinSheet(vm: AppViewModel) {
                 .height(14.dp),
             contentAlignment = Alignment.Center,
         ) {
-            if (vm.pinErr) {
+            var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+            LaunchedEffect(vm.pinLockedUntil) {
+                nowMs = System.currentTimeMillis()
+                while (nowMs < vm.pinLockedUntil) {
+                    delay(500)
+                    nowMs = System.currentTimeMillis()
+                }
+            }
+            val lockedSecs = ((vm.pinLockedUntil - nowMs + 999) / 1000).coerceAtLeast(0)
+            if (!vm.pinErr && ctx.mode == PinMode.Enter && lockedSecs > 0) {
                 Text(
-                    "Wrong PIN — try again",
+                    "Try again in " + if (lockedSecs >= 60) "${(lockedSecs + 59) / 60} min" else "${lockedSecs}s",
+                    fontSize = 11.sp,
+                    color = c.sub,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                )
+            } else if (vm.pinErr) {
+                Text(
+                    vm.pinErrText,
                     fontSize = 11.sp,
                     color = c.dng,
                     textAlign = TextAlign.Center,
@@ -185,6 +213,7 @@ private fun KeypadKey(key: String, modifier: Modifier = Modifier, onPress: () ->
         modifier
             .height(52.dp)
             .then(if (key == "") Modifier else Modifier.pressable(onClick = onPress))
+            .then(if (key == "back") Modifier.semantics { contentDescription = "Delete digit" } else Modifier)
             .background(if (transparent) Color.Transparent else c.inp, RoundedCornerShape(14.dp)),
         contentAlignment = Alignment.Center,
     ) {

@@ -151,13 +151,13 @@ private fun TodayBody(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                GBtn(onClick = { vm.openFab() }, primary = true) {
+                GBtn(onClick = { vm.openFab() }, primary = true, label = "Create") {
                     Icon(BentoIcons.Plus, null, tint = Color.White, modifier = Modifier.size(18.dp))
                 }
-                GBtn(onClick = { vm.openSearch() }) {
+                GBtn(onClick = { vm.openSearch() }, label = "Search") {
                     Icon(BentoIcons.Search, null, tint = c.sub, modifier = Modifier.size(18.dp))
                 }
-                GBtn(onClick = { vm.openSettings() }) {
+                GBtn(onClick = { vm.openSettings() }, label = "Settings") {
                     Icon(BentoIcons.Sliders, null, tint = c.sub, modifier = Modifier.size(19.dp))
                 }
             }
@@ -621,7 +621,7 @@ private fun PlanningBuilder(vm: AppViewModel, data: AppData, use24h: Boolean) {
                         .padding(vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    BentoCheckbox(checked, onToggle = { vm.togglePlanningTask(task.id) }, size = 18.dp, corner = 6.dp)
+                    BentoCheckbox(checked, onToggle = { vm.togglePlanningTask(task.id) }, size = 18.dp, corner = 6.dp, label = task.title)
                     Text(
                         task.title,
                         fontSize = 12.5.sp,
@@ -904,6 +904,7 @@ private fun TasksTile(
                         onToggle = { vm.toggleTask(t.id) },
                         size = 17.dp,
                         corner = 6.dp,
+                        label = t.title,
                     )
                     val prColor = Priority.colorHex(t.priority)?.let { hexColor(it) }
                     if (prColor != null) {

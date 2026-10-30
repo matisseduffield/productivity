@@ -9,18 +9,51 @@ import java.time.LocalDate
  * daily = every day on/after the base date, weekly = same weekday,
  * monthly = same day-of-month (months without that day are skipped).
  * Dates in [EventItem.exDates] are skipped — "this event only" deletes and
- * edits carve occurrences out of the series.
+ * edits carve occurrences out of the series — as is anything after
+ * [EventItem.recurUntil].
  */
 fun EventItem.occursOn(date: LocalDate): Boolean {
     val base = this.date.toDate()
+    if (date.isBefore(base)) return false
+    if (recur != Recur.NONE) {
+        val until = recurUntil?.toDate()
+        if (until != null && date.isAfter(until)) return false
+    }
     val hit = when (recur) {
-        Recur.DAILY -> !date.isBefore(base)
-        Recur.WEEKLY -> !date.isBefore(base) && base.dayOfWeek == date.dayOfWeek
-        Recur.MONTHLY -> !date.isBefore(base) && base.dayOfMonth == date.dayOfMonth
+        Recur.DAILY -> true
+        Recur.WEEKDAYS -> date.dayOfWeek.value <= 5
+        Recur.WEEKLY -> base.dayOfWeek == date.dayOfWeek
+        Recur.FORTNIGHTLY -> java.time.temporal.ChronoUnit.DAYS.between(base, date) % 14 == 0L
+        Recur.MONTHLY -> base.dayOfMonth == date.dayOfMonth
+        Recur.YEARLY -> base.month == date.month && base.dayOfMonth == date.dayOfMonth
         // Multi-day spans (non-recurring only) cover base..spanEnd.
-        else -> !date.isBefore(base) && !date.isAfter(spanEnd() ?: base)
+        else -> !date.isAfter(spanEnd() ?: base)
     }
     return hit && (recur == Recur.NONE || date.toIso() !in exDates)
+}
+
+/**
+ * The series cut short so its last possible occurrence is the day before
+ * [cut] ("this and later" edits and deletes). Excluded dates past the new
+ * end are dropped; they can no longer matter.
+ */
+fun EventItem.endSeriesBefore(cut: LocalDate): EventItem {
+    val last = cut.minusDays(1)
+    val current = recurUntil?.toDate()
+    val until = if (current != null && current.isBefore(last)) current else last
+    return copy(recurUntil = until.toIso(), exDates = exDates.filter { it <= until.toIso() })
+}
+
+/** Next due date for a repeating task after [anchor]. */
+fun nextTaskDue(recur: String, anchor: LocalDate, monthDay: Int): LocalDate = when (recur) {
+    Recur.DAILY -> anchor.plusDays(1)
+    Recur.WEEKDAYS -> generateSequence(anchor.plusDays(1)) { it.plusDays(1) }
+        .first { it.dayOfWeek.value <= 5 }
+    Recur.WEEKLY -> anchor.plusWeeks(1)
+    Recur.FORTNIGHTLY -> anchor.plusWeeks(2)
+    Recur.MONTHLY -> nextMonthlyDue(anchor, monthDay)
+    Recur.YEARLY -> anchor.plusYears(1)
+    else -> anchor
 }
 
 /**
@@ -39,12 +72,7 @@ fun completeTask(data: AppData, taskId: String, today: LocalDate): AppData =
                 // Older monthly tasks have no stored day: adopt the current
                 // due day once so later short months can't erode it.
                 val monthDay = t.recurDay ?: t.due?.toDate()?.dayOfMonth ?: anchor.dayOfMonth
-                val next = when (t.recur) {
-                    Recur.DAILY -> anchor.plusDays(1)
-                    Recur.WEEKLY -> anchor.plusWeeks(1)
-                    Recur.MONTHLY -> nextMonthlyDue(anchor, monthDay)
-                    else -> anchor
-                }
+                val next = nextTaskDue(t.recur, anchor, monthDay)
                 // The next occurrence starts with a fresh checklist.
                 t.copy(
                     due = next.toIso(),

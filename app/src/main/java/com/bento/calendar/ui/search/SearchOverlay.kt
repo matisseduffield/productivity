@@ -105,7 +105,7 @@ fun SearchOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                             append(
                                 Fmt.dayShort(e.date.toDate()) + " · " +
                                     (if (e.allDay) "All day" else Fmt.time(e.start, use24h)) +
-                                    if (e.recur.isNotEmpty() && e.recur != Recur.NONE) " · repeats ${e.recur}" else "",
+                                    if (e.recur.isNotEmpty() && e.recur != Recur.NONE) " · repeats ${Recur.label(e.recur).lowercase()}" else "",
                             )
                             if (e.loc.isNotEmpty()) {
                                 append(" · ")

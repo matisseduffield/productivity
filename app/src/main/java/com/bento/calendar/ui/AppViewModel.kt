@@ -28,6 +28,8 @@ import com.bento.calendar.data.compactFocusHistory
 import com.bento.calendar.data.IcsImportResult
 import com.bento.calendar.data.completeReviewedBlock
 import com.bento.calendar.data.completeTaskWithBlocks
+import com.bento.calendar.data.AutoBackup
+import com.bento.calendar.data.endSeriesBefore
 import com.bento.calendar.data.monthlyRecurDay
 import com.bento.calendar.data.exportEventsToIcs
 import com.bento.calendar.data.importEventsFromIcs
@@ -55,9 +57,12 @@ import com.bento.calendar.data.toDate
 import com.bento.calendar.data.toIso
 import com.bento.calendar.data.toMins
 import com.bento.calendar.reminders.ReminderScheduler
+import com.bento.calendar.security.PinGuard
+import com.bento.calendar.security.PinHash
 import com.bento.calendar.focus.FocusTimer
 import com.bento.calendar.updates.UpdateManager
 import com.bento.calendar.widget.WidgetSync
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -66,6 +71,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.decodeFromJsonElement
@@ -88,7 +94,7 @@ private fun calViewFromPref(value: String): CalView = when (value) {
 }
 
 /** Scope of an edit/delete on a recurring event. */
-enum class EditScope { Single, Series }
+enum class EditScope { Single, Following, Series }
 
 data class EventDraft(
     val id: String?,
@@ -103,6 +109,8 @@ data class EventDraft(
     val allDay: Boolean = false,
     /** Last day of a multi-day event; null = single day. Excludes recurrence. */
     val endDate: LocalDate? = null,
+    /** Last date a repeating event occurs on; null = repeats forever. */
+    val recurUntil: LocalDate? = null,
     /** The tapped instance date when editing a recurring event. */
     val occurrenceDate: LocalDate? = null,
     /** "This event only" vs "whole series" for recurring edits/deletes. */
@@ -136,7 +144,13 @@ sealed interface PinThen {
     data object None : PinThen
 }
 
-data class PinCtx(val mode: PinMode, val then: PinThen, val noteTitle: String)
+data class PinCtx(
+    val mode: PinMode,
+    val then: PinThen,
+    val noteTitle: String,
+    /** Set mode: the first entry, waiting for the confirming second one. */
+    val firstEntry: String? = null,
+)
 
 /** Two-tap confirm keys ("Delete" -> "Sure?"). */
 object Arm {
@@ -196,6 +210,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var pinErr by mutableStateOf(false)
         private set
+    /** Why the last entry was rejected; shown under the dots while [pinErr]. */
+    var pinErrText by mutableStateOf("")
+        private set
+    /** Wall-clock ms until which PIN entry is paused after repeated misses. */
+    var pinLockedUntil by mutableStateOf(0L)
+        private set
+    private var pinFailures = 0
+    private var pinChecking = false
     var evDraft by mutableStateOf<EventDraft?>(null)
         private set
     var tkDraft by mutableStateOf<TaskDraft?>(null)
@@ -239,6 +261,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             lastScheduledTasks = d.tasks
             lastScheduledTaskBlocks = d.taskBlocks
             lastBlockReminder = d.prefs.blockReminderMin
+            lastDailySummary = d.prefs.dailySummaryAt
             // Seed the widget gate too: the widget already reflects the store
             // at launch, so the first mutation only pushes if it changed
             // something widget-relevant.
@@ -253,6 +276,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (compactFocusHistory(d, today()) != d) {
                 mut { x -> compactFocusHistory(x, today()) }
             }
+            // Pre-3.5 stores keep the PIN as plain digits; re-save it hashed.
+            val legacyPin = d.pin?.takeIf(PinHash::isLegacy)
+            if (legacyPin != null) {
+                val hashed = withContext(Dispatchers.Default) { PinHash.hash(legacyPin) }
+                mut { x -> if (x.pin == legacyPin) x.copy(pin = hashed) else x }
+            }
         }
         // NOTE: the automatic update check is kicked off from MainActivity, not
         // here — the update state properties are declared below this init block
@@ -266,6 +295,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var lastScheduledTasks: List<TaskItem>? = null
     private var lastScheduledTaskBlocks: List<TaskBlock>? = null
     private var lastBlockReminder: Int? = null
+    private var lastDailySummary: String? = null
     private var lastFocusSessions: List<FocusSession>? = null
 
     /**
@@ -315,13 +345,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // alarm rescan.
             if (
                 d.events != lastScheduledEvents || d.tasks != lastScheduledTasks ||
-                d.taskBlocks != lastScheduledTaskBlocks || d.prefs.blockReminderMin != lastBlockReminder
+                d.taskBlocks != lastScheduledTaskBlocks || d.prefs.blockReminderMin != lastBlockReminder ||
+                d.prefs.dailySummaryAt != lastDailySummary
             ) {
                 ReminderScheduler.reschedule(getApplication(), d)
                 lastScheduledEvents = d.events
                 lastScheduledTasks = d.tasks
                 lastScheduledTaskBlocks = d.taskBlocks
                 lastBlockReminder = d.prefs.blockReminderMin
+                lastDailySummary = d.prefs.dailySummaryAt
             }
             // Same idea for the widget: it only shows events, tasks and a
             // few prefs, so gate the push on that projection.
@@ -619,6 +651,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             loc = base.loc,
             allDay = base.allDay,
             endDate = base.spanEnd(),
+            recurUntil = base.recurUntil?.toDate()?.takeIf { base.recur != Recur.NONE },
             // For recurring events remember which instance was tapped so
             // "this event only" edits/deletes know their target date.
             occurrenceDate = if (base.recur != Recur.NONE) occurrence.date.toDate() else null,
@@ -681,6 +714,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         fabOpen = false
     }
 
+    /**
+     * Turns the open editor into a new, unsaved copy (nothing is written until
+     * Save). A copy made from one occurrence of a series is a one-off on that
+     * date; a copy of the whole series repeats the same way.
+     */
+    fun duplicateEventDraft() {
+        val d = evDraft ?: return
+        val single = d.occurrenceDate != null && d.scope != EditScope.Series
+        evDraft = d.copy(
+            id = null,
+            title = d.title.trim().ifEmpty { "Untitled" } + " (copy)",
+            recur = if (single) Recur.NONE else d.recur,
+            recurUntil = if (single) null else d.recurUntil,
+            occurrenceDate = null,
+            scope = EditScope.Series,
+        )
+        disarm(Arm.EVENT)
+    }
+
     fun updateEventDraft(transform: (EventDraft) -> EventDraft) {
         evDraft = evDraft?.let(transform)
     }
@@ -732,6 +784,36 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // Belt and braces: the editor disables recurrence for multi-day
         // drafts, but never persist both — expansion assumes they exclude.
         val recur = if (multiDay) Recur.NONE else d.recur
+        val until = d.recurUntil?.takeIf { recur != Recur.NONE && !it.isBefore(d.date) }?.toIso()
+        val existing = data.value?.events?.firstOrNull { it.id == d.id }
+        // "This and later": end the old series the day before the tapped
+        // occurrence and start a new series there carrying the edits. From the
+        // very first occurrence it's simply a whole-series edit.
+        val split = d.id != null && d.scope == EditScope.Following && d.occurrenceDate != null &&
+            existing != null && d.occurrenceDate.isAfter(existing.date.toDate())
+        if (split) {
+            val cut = d.occurrenceDate!!
+            val tail = EventItem(
+                id = newId(),
+                title = d.title.trim().ifEmpty { "Untitled" },
+                date = d.date.toIso(),
+                start = minsToHm(startM),
+                end = minsToHm(endM),
+                allDay = d.allDay,
+                cat = d.cat,
+                recur = recur,
+                remind = d.remind,
+                loc = d.loc.trim(),
+                endDate = spanEnd?.toIso(),
+                recurUntil = until,
+                exDates = if (recur == Recur.NONE) emptyList() else existing!!.exDates.filter { it >= d.date.toIso() },
+            )
+            mut { x ->
+                x.copy(events = x.events.map { if (it.id == d.id) it.endSeriesBefore(cut) else it } + tail)
+            }
+            evDraft = null
+            return
+        }
         val rec = EventItem(
             id = d.id ?: newId(),
             title = d.title.trim().ifEmpty { "Untitled" },
@@ -744,12 +826,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             remind = d.remind,
             loc = d.loc.trim(),
             endDate = spanEnd?.toIso(),
+            recurUntil = until,
             // Series edits keep the carved-out dates unless recurrence is
             // switched off, which turns it back into a plain one-off.
             exDates = if (recur == Recur.NONE) {
                 emptyList()
             } else {
-                data.value?.events?.firstOrNull { it.id == d.id }?.exDates ?: emptyList()
+                existing?.exDates ?: emptyList()
             },
         )
         mut { x ->
@@ -767,7 +850,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val d = evDraft ?: return
         val id = d.id ?: return
         twoTap(Arm.EVENT) {
-            if (d.scope == EditScope.Single && d.occurrenceDate != null) {
+            val base = data.value?.events?.firstOrNull { it.id == id }
+            val cut = d.occurrenceDate
+            if (d.scope == EditScope.Following && cut != null && base != null && cut.isAfter(base.date.toDate())) {
+                // Earlier occurrences stay; nothing goes to the trash.
+                mut { x -> x.copy(events = x.events.map { if (it.id == id) it.endSeriesBefore(cut) else it }) }
+            } else if (d.scope == EditScope.Single && d.occurrenceDate != null) {
                 // Skip just this occurrence; the series lives on. Not a real
                 // deletion, so nothing goes to the trash.
                 val exDate = d.occurrenceDate.toIso()
@@ -810,7 +898,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // ---- Tasks ----
     /** Plain tasks toggle done; repeating tasks advance to the next due date. */
     fun toggleTask(id: String) {
+        val before = data.value
+        val task = before?.tasks?.firstOrNull { it.id == id }
         mut { completeTaskWithBlocks(it, id, today()) }
+        // Completing is undoable: a repeating task has already jumped to its
+        // next date, so un-ticking alone can't bring the old one back.
+        if (task != null && !task.done) {
+            val blocks = before.taskBlocks.filter { it.taskId == id }.associateBy { it.id }
+            offerUndo(UNDO_DONE) { x ->
+                x.copy(
+                    tasks = x.tasks.map { if (it.id == id) task else it },
+                    taskBlocks = x.taskBlocks.map { b -> blocks[b.id] ?: b },
+                )
+            }
+        }
     }
 
     /**
@@ -848,6 +949,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         newTask()
+    }
+
+    /** New unsaved copy of the open task, with its checklist unticked. */
+    fun duplicateTaskDraft() {
+        val d = tkDraft ?: return
+        tkDraft = d.copy(
+            id = null,
+            title = d.title.trim().ifEmpty { "Untitled" } + " (copy)",
+            subs = d.subs.map { it.copy(id = newId(), done = false) },
+        )
+        disarm(Arm.TASK)
     }
 
     fun updateTaskDraft(transform: (TaskDraft) -> TaskDraft) {
@@ -1395,21 +1507,55 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun setNoteTitle(v: String) = editNote { it.copy(title = v) }
+    fun setNoteTitle(v: String) = queueNoteEdit(title = v)
 
-    fun setNoteBody(v: String) = editNote { it.copy(body = v) }
+    fun setNoteBody(v: String) = queueNoteEdit(body = v)
 
-    private fun editNote(transform: (NoteItem) -> NoteItem) {
+    // Typing is buffered: the editor keeps its own text state, and the store
+    // is written once the keyboard pauses instead of on every keystroke.
+    private var pendingNoteId: String? = null
+    private var pendingTitle: String? = null
+    private var pendingBody: String? = null
+    private var noteSaveJob: Job? = null
+
+    private fun queueNoteEdit(title: String? = null, body: String? = null) {
         val id = openNoteId ?: return
+        if (pendingNoteId != null && pendingNoteId != id) flushNoteEdits()
+        pendingNoteId = id
+        if (title != null) pendingTitle = title
+        if (body != null) pendingBody = body
+        noteSaveJob?.cancel()
+        noteSaveJob = viewModelScope.launch {
+            delay(NOTE_SAVE_DELAY_MS)
+            flushNoteEdits()
+        }
+    }
+
+    /** Write any buffered note typing now (closing the note, leaving the app). */
+    fun flushNoteEdits() {
+        val id = pendingNoteId ?: return
+        val title = pendingTitle
+        val body = pendingBody
+        dropNoteEdits()
+        val at = System.currentTimeMillis()
         mut { x ->
             x.copy(notes = x.notes.map {
-                if (it.id == id) transform(it).copy(updated = System.currentTimeMillis()) else it
+                if (it.id == id) it.copy(title = title ?: it.title, body = body ?: it.body, updated = at) else it
             })
         }
     }
 
+    private fun dropNoteEdits() {
+        noteSaveJob?.cancel()
+        noteSaveJob = null
+        pendingNoteId = null
+        pendingTitle = null
+        pendingBody = null
+    }
+
     fun toggleNotePin() {
         val id = openNoteId ?: return
+        flushNoteEdits()
         mut { x ->
             x.copy(notes = x.notes.map { if (it.id == id) it.copy(pinned = !it.pinned) else it })
         }
@@ -1417,6 +1563,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun toggleNoteLock() {
         val id = openNoteId ?: return
+        flushNoteEdits()
         val n = data.value?.notes?.firstOrNull { it.id == id } ?: return
         if (!n.locked && data.value?.pin == null) {
             pinCtx = PinCtx(PinMode.Set, PinThen.LockNote(id), n.title.ifEmpty { "Untitled" })
@@ -1432,6 +1579,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteNote() {
         val id = openNoteId ?: return
         twoTap(Arm.NOTE) {
+            flushNoteEdits()
             mut { x ->
                 val victim = x.notes.firstOrNull { it.id == id }
                 val next = x.copy(notes = x.notes.filter { it.id != id })
@@ -1445,8 +1593,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun closeNote() {
         val id = openNoteId
         val n = data.value?.notes?.firstOrNull { it.id == id }
-        if (n != null && n.title.isBlank() && n.body.isBlank()) {
+        val pending = id != null && pendingNoteId == id
+        val title = if (pending) pendingTitle ?: n?.title else n?.title
+        val body = if (pending) pendingBody ?: n?.body else n?.body
+        if (n != null && title.isNullOrBlank() && body.isNullOrBlank()) {
+            dropNoteEdits()
             mut { x -> x.copy(notes = x.notes.filter { it.id != n.id }) }
+        } else {
+            flushNoteEdits()
         }
         openNoteId = null
         disarm(Arm.NOTE)
@@ -1455,43 +1609,78 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // ---- PIN ----
     fun pinPress(key: String) {
         val ctx = pinCtx ?: return
+        if (pinChecking) return
         if (key == "back") {
             pinBuf = pinBuf.dropLast(1)
             return
         }
+        if (ctx.mode == PinMode.Enter && System.currentTimeMillis() < pinLockedUntil) return
         if (pinBuf.length >= 4) return
         val buf = pinBuf + key
+        pinBuf = buf
         if (buf.length < 4) {
-            pinBuf = buf
             pinErr = false
             return
         }
         when {
-            ctx.mode == PinMode.Set -> {
-                mut { x ->
-                    var d = x.copy(pin = buf)
-                    val lockId = (ctx.then as? PinThen.LockNote)?.id
-                    if (lockId != null) {
-                        d = d.copy(notes = d.notes.map { if (it.id == lockId) it.copy(locked = true) else it })
-                    }
-                    d
-                }
-                finishPin(ctx)
-            }
-            buf == data.value?.pin -> finishPin(ctx)
-            else -> {
+            ctx.mode == PinMode.Set && ctx.firstEntry == null -> {
                 pinBuf = ""
-                pinErr = true
-                pinErrJob?.cancel()
-                pinErrJob = viewModelScope.launch {
-                    delay(600)
-                    pinErr = false
+                pinCtx = ctx.copy(firstEntry = buf)
+            }
+            ctx.mode == PinMode.Set && buf != ctx.firstEntry -> {
+                pinCtx = ctx.copy(firstEntry = null)
+                rejectPin("PINs didn't match — start again")
+            }
+            ctx.mode == PinMode.Set -> {
+                pinChecking = true
+                viewModelScope.launch {
+                    val hashed = withContext(Dispatchers.Default) { PinHash.hash(buf) }
+                    val lockId = (ctx.then as? PinThen.LockNote)?.id
+                    mut { x ->
+                        var d = x.copy(pin = hashed)
+                        if (lockId != null) {
+                            d = d.copy(notes = d.notes.map { if (it.id == lockId) it.copy(locked = true) else it })
+                        }
+                        d
+                    }
+                    pinChecking = false
+                    if (pinCtx == ctx) finishPin(ctx)
+                }
+            }
+            else -> {
+                val stored = data.value?.pin
+                pinChecking = true
+                viewModelScope.launch {
+                    val ok = withContext(Dispatchers.Default) { PinHash.verify(buf, stored) }
+                    pinChecking = false
+                    if (pinCtx != ctx) return@launch
+                    if (ok) {
+                        finishPin(ctx)
+                    } else {
+                        pinFailures++
+                        val wait = PinGuard.lockoutMs(pinFailures)
+                        if (wait > 0) pinLockedUntil = System.currentTimeMillis() + wait
+                        rejectPin(if (wait > 0) "Too many tries — wait ${(wait / 1000).let { if (it >= 60) "${it / 60} min" else "$it s" }}" else "Wrong PIN — try again")
+                    }
                 }
             }
         }
     }
 
+    private fun rejectPin(message: String) {
+        pinBuf = ""
+        pinErr = true
+        pinErrText = message
+        pinErrJob?.cancel()
+        pinErrJob = viewModelScope.launch {
+            delay(if (pinLockedUntil > System.currentTimeMillis()) 1800 else 900)
+            pinErr = false
+        }
+    }
+
     private fun finishPin(ctx: PinCtx) {
+        pinFailures = 0
+        pinLockedUntil = 0
         when (val t = ctx.then) {
             is PinThen.OpenNote -> {
                 unlocked = unlocked + t.id
@@ -1587,6 +1776,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Back from a long absence: locked notes ask again, and a locked note
+     * left open on screen closes so it isn't sitting there unprotected.
+     */
+    fun relockNotes() {
+        flushNoteEdits()
+        val open = openNoteId
+        if (open != null && data.value?.notes?.any { it.id == open && it.locked } == true) {
+            openNoteId = null
+        }
+        unlocked = emptySet()
+    }
+
+    /** True while a locked note is open; the activity hides it from recents. */
+    fun lockedNoteOpen(d: AppData?, id: String?): Boolean =
+        id != null && d?.notes?.any { it.id == id && it.locked } == true
+
     /** Settings: first-time PIN setup (no existing PIN to prove). */
     fun startSetPin() {
         pinCtx = PinCtx(PinMode.Set, PinThen.None, "")
@@ -1678,6 +1884,42 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Set by MainActivity; invoked when enabling the overlay needs the
      *  READ_CALENDAR runtime permission. */
     var requestCalendarPermission: (() -> Unit)? = null
+
+    // ---- Daily backup to a folder ----
+    /** Set by MainActivity: opens the system folder picker. */
+    var pickBackupFolder: (() -> Unit)? = null
+
+    /** False after a backup attempt failed (folder moved, permission revoked). */
+    var autoBackupOk by mutableStateOf(true)
+        private set
+    private var autoBackupRunning = false
+
+    fun setAutoBackupFolder(uri: String?) {
+        autoBackupOk = true
+        mutPrefs { it.copy(autoBackupFolder = uri, lastAutoBackupAt = 0) }
+        if (uri != null) runAutoBackup(force = true, folder = uri)
+    }
+
+    /** Called on app start; writes at most one backup per day. */
+    fun runAutoBackup(force: Boolean = false, folder: String? = null) {
+        val d = data.value ?: return
+        val target = folder ?: d.prefs.autoBackupFolder ?: return
+        val now = System.currentTimeMillis()
+        if (autoBackupRunning || (!force && !AutoBackup.isDue(d.prefs.lastAutoBackupAt, now))) return
+        flushNoteEdits()
+        autoBackupRunning = true
+        viewModelScope.launch {
+            // Let the flushed note edit land before taking the snapshot.
+            delay(50)
+            val json = exportJson()
+            val ok = json != null && withContext(Dispatchers.IO) {
+                AutoBackup.write(getApplication(), android.net.Uri.parse(target), json, today())
+            }
+            autoBackupRunning = false
+            autoBackupOk = ok
+            if (ok) mutPrefs { it.copy(lastAutoBackupAt = now) }
+        }
+    }
 
     fun hasCalendarOverlayEnabled(): Boolean = data.value?.prefs?.deviceCalsEnabled == true
 
@@ -1821,6 +2063,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setTheme(theme: String) = mutPrefs { it.copy(theme = theme) }
+    fun setDailySummary(at: String?) = mutPrefs { it.copy(dailySummaryAt = at) }
     fun setAccent(hex: String) = mutPrefs { it.copy(accent = hex) }
     fun toggleDynamicColor() = mutPrefs { it.copy(dynamicColor = !it.dynamicColor) }
     fun toggleBioNotes() = mutPrefs { it.copy(bioNotes = !it.bioNotes) }
@@ -1879,6 +2122,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // it holds exactly the content the label claims to erase, and a
             // privacy wipe that leaves restorable copies isn't a wipe.
             dismissUndo()
+            dropNoteEdits()
             mut {
                 it.copy(
                     events = emptyList(),
@@ -1939,8 +2183,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Successive swipes within the window batch into one undo. */
     private val pendingRestores = mutableListOf<(AppData) -> AppData>()
-    private var undoTaskCount = 0
-    private var undoNoteCount = 0
+    private val undoCounts = mutableMapOf<String, Int>()
     private var overlayWatcherStarted = false
 
     /**
@@ -1969,13 +2212,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun offerUndo(kind: String, restore: (AppData) -> AppData) {
         ensureOverlayWatcher()
         pendingRestores += restore
-        if (kind == "task") undoTaskCount++ else undoNoteCount++
+        undoCounts[kind] = (undoCounts[kind] ?: 0) + 1
+        val total = undoCounts.values.sum()
         val label = when {
-            undoTaskCount > 0 && undoNoteCount > 0 -> "${undoTaskCount + undoNoteCount} items deleted"
-            undoTaskCount > 1 -> "$undoTaskCount tasks deleted"
-            undoNoteCount > 1 -> "$undoNoteCount notes deleted"
-            undoTaskCount == 1 -> "Task deleted"
-            else -> "Note deleted"
+            undoCounts.size > 1 -> "$total changes"
+            kind == UNDO_DONE -> if (total > 1) "$total tasks completed" else "Task completed"
+            kind == "task" -> if (total > 1) "$total tasks deleted" else "Task deleted"
+            else -> if (total > 1) "$total notes deleted" else "Note deleted"
         }
         undoState = UndoState(label)
         undoJob?.cancel()
@@ -1988,8 +2231,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun clearUndo() {
         undoState = null
         pendingRestores.clear()
-        undoTaskCount = 0
-        undoNoteCount = 0
+        undoCounts.clear()
     }
 
     fun performUndo() {
@@ -2318,14 +2560,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 it.id.isNotBlank() && it.label.isNotBlank() &&
                     it.colorHex.removePrefix("#").toLongOrNull(16) != null
             }.ifEmpty { Cats.DEFAULTS }
-            val knownRecur = setOf(Recur.NONE, Recur.DAILY, Recur.WEEKLY, Recur.MONTHLY)
+            val knownRecur = Recur.ALL.toSet()
             decoded.copy(
                 categories = validCats,
                 events = decoded.events.map {
                     val recur = if (it.recur in knownRecur) it.recur else Recur.NONE
                     // spanEnd() is the read-time truth; normalizing to it here
                     // drops endDate from recurring or backwards spans.
-                    it.copy(recur = recur, endDate = it.copy(recur = recur).spanEnd()?.toIso())
+                    it.copy(
+                        recur = recur,
+                        endDate = it.copy(recur = recur).spanEnd()?.toIso(),
+                        recurUntil = it.recurUntil?.takeIf { until ->
+                            recur != Recur.NONE && runCatching { until.toDate() }.isSuccess
+                        },
+                    )
                 },
                 tasks = decoded.tasks.map {
                     val recur = if (it.recur in knownRecur) it.recur else Recur.NONE
@@ -2437,7 +2685,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             return false
         }
         dismissUndo()
-        mut { imported }
+        dropNoteEdits()
+        // Exports never contain the PIN, so keep this phone's: otherwise a
+        // restore would leave locked notes openable by whoever sets a new one.
+        // The backup folder is a permission on this phone, not portable data.
+        mut { x ->
+            imported.copy(
+                pin = imported.pin ?: x.pin,
+                prefs = imported.prefs.copy(
+                    autoBackupFolder = x.prefs.autoBackupFolder,
+                    lastAutoBackupAt = x.prefs.lastAutoBackupAt,
+                ),
+            )
+        }
         calViewState = calViewFromPref(imported.prefs.lastCalView)
         unlocked = emptySet()
         openNoteId = null
@@ -2449,5 +2709,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 }
 
 /** Marker written into exports and accepted (or legacy keys) on import. */
+/** Undo kind for completing a task (alongside "task"/"note" deletions). */
+private const val UNDO_DONE = "done"
+
+/** Pause in typing before buffered note text is written to the store. */
+private const val NOTE_SAVE_DELAY_MS = 400L
+
 private const val BACKUP_FORMAT_KEY = "format"
 private const val BACKUP_FORMAT = "bento.calendar.v1"

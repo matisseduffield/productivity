@@ -47,6 +47,7 @@ import com.bento.calendar.ui.components.CategoryPills
 import com.bento.calendar.ui.components.DangerTextButton
 import com.bento.calendar.ui.components.FieldLabel
 import com.bento.calendar.ui.components.PrimaryButton
+import com.bento.calendar.ui.components.QuietTextButton
 import com.bento.calendar.ui.components.TextLink
 import com.bento.calendar.ui.components.pressable
 import com.bento.calendar.ui.theme.LocalBento
@@ -327,12 +328,9 @@ fun EventEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                     } else {
                         BentoSelectField(
                             value = d.recur,
-                            options = listOf(
-                                "Doesn't repeat" to Recur.NONE,
-                                "Daily" to Recur.DAILY,
-                                "Weekly" to Recur.WEEKLY,
-                                "Monthly" to Recur.MONTHLY,
-                            ),
+                            options = Recur.ALL.map { r ->
+                                (if (r == Recur.NONE) "Doesn't repeat" else Recur.label(r)) to r
+                            },
                             onSelect = { v ->
                                 vm.updateEventDraft {
                                     // Belt and braces: a recurrence clears any
@@ -360,6 +358,25 @@ fun EventEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 )
             }
         }
+        if (d.recur != Recur.NONE && spanEnd == null && !(recurringEdit && d.scope == EditScope.Single)) {
+            Column(Modifier.padding(top = 15.dp)) {
+                Row(Modifier.fillMaxWidth()) {
+                    FieldLabel("Repeat until · optional")
+                    Spacer(Modifier.weight(1f))
+                    if (d.recurUntil != null) {
+                        TextLink("Clear", onClick = { vm.updateEventDraft { it.copy(recurUntil = null) } })
+                    }
+                }
+                BentoDateField(
+                    value = d.recurUntil ?: d.date.plusMonths(3),
+                    display = d.recurUntil?.let { Fmt.dayShort(it) } ?: "Forever",
+                    onPick = { v ->
+                        // An end before the start would leave nothing; keep at least the start.
+                        vm.updateEventDraft { it.copy(recurUntil = if (v.isBefore(it.date)) it.date else v) }
+                    },
+                )
+            }
+        }
         if (recurringEdit) {
             Column(Modifier.padding(top = 15.dp)) {
                 FieldLabel("Apply to")
@@ -378,7 +395,24 @@ fun EventEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                         },
                     )
                     OptionPill(
-                        label = "Whole series",
+                        label = "This & later",
+                        active = d.scope == EditScope.Following,
+                        onClick = {
+                            vm.updateEventDraft {
+                                it.copy(
+                                    scope = EditScope.Following,
+                                    // The new tail series starts at the tapped instance.
+                                    date = if (it.scope == EditScope.Series && it.date == seriesBaseDate) {
+                                        it.occurrenceDate ?: it.date
+                                    } else {
+                                        it.date
+                                    },
+                                )
+                            }
+                        },
+                    )
+                    OptionPill(
+                        label = "All",
                         active = d.scope == EditScope.Series,
                         onClick = {
                             vm.updateEventDraft {
@@ -388,7 +422,7 @@ fun EventEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                                     // date is still the untouched occurrence —
                                     // a date the user deliberately picked while
                                     // in Single scope must never be clobbered.
-                                    date = if (it.date == it.occurrenceDate) {
+                                    date = if (it.date == it.occurrenceDate && it.scope != EditScope.Series) {
                                         seriesBaseDate ?: it.date
                                     } else {
                                         it.date
@@ -399,10 +433,11 @@ fun EventEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                     )
                 }
                 Text(
-                    if (d.scope == EditScope.Single) {
-                        "Changes only " + Fmt.dayShort(d.occurrenceDate ?: d.date)
-                    } else {
-                        "Changes every occurrence"
+                    when (d.scope) {
+                        EditScope.Single -> "Changes only " + Fmt.dayShort(d.occurrenceDate ?: d.date)
+                        EditScope.Following -> "Changes " + Fmt.dayShort(d.occurrenceDate ?: d.date) +
+                            " and every later occurrence"
+                        EditScope.Series -> "Changes every occurrence"
                     },
                     fontSize = 11.sp,
                     color = c.faint,
@@ -422,10 +457,12 @@ fun EventEditorSheet(vm: AppViewModel, data: AppData, now: LocalDateTime) {
         }
         PrimaryButton("Save event", onClick = vm::saveEvent)
         if (d.id != null) {
+            QuietTextButton("Duplicate", onClick = vm::duplicateEventDraft)
             DangerTextButton(
                 when {
                     vm.isArmed(Arm.EVENT) -> "Tap again to delete"
                     recurringEdit && d.scope == EditScope.Single -> "Delete this event"
+                    recurringEdit && d.scope == EditScope.Following -> "Delete this & later"
                     recurringEdit -> "Delete series"
                     else -> "Delete event"
                 },

@@ -105,7 +105,7 @@ private fun QuickAdd(vm: AppViewModel) {
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { commit() }),
             )
-            GBtn(onClick = commit, primary = true) {
+            GBtn(onClick = commit, primary = true, label = "Add") {
                 Icon(BentoIcons.Plus, "Add", tint = Color.White, modifier = Modifier.size(18.dp))
             }
         }
@@ -132,13 +132,7 @@ private fun QuickAdd(vm: AppViewModel) {
                     PreviewChip("${Fmt.time(parsed.start!!, use24h)}–${Fmt.time(parsed.end!!, use24h)}")
                 }
                 if (parsed.recur != Recur.NONE) {
-                    PreviewChip(
-                        when (parsed.recur) {
-                            Recur.DAILY -> "Daily"
-                            Recur.WEEKLY -> "Weekly"
-                            else -> "Monthly"
-                        },
-                    )
+                    PreviewChip(Recur.label(parsed.recur))
                 }
                 parsed.categoryId?.let { id ->
                     data?.categories?.firstOrNull { it.id == id }?.let { category ->

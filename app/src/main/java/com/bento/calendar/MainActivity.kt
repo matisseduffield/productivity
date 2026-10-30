@@ -6,11 +6,13 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.runtime.snapshotFlow
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
@@ -20,6 +22,8 @@ import com.bento.calendar.ui.AppViewModel
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -76,6 +80,23 @@ class MainActivity : FragmentActivity() {
                     Toast.LENGTH_SHORT,
                 ).show()
             }
+        }
+
+    /** Settings > Data > Daily backup: a folder the app may keep writing to. */
+    private val backupFolderLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+            if (uri == null) return@registerForActivityResult
+            val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            val kept = runCatching { contentResolver.takePersistableUriPermission(uri, flags) }.isSuccess
+            if (!kept) {
+                Toast.makeText(this, "That folder can't be used for backups", Toast.LENGTH_SHORT).show()
+                return@registerForActivityResult
+            }
+            // Release the previous folder so permissions don't pile up.
+            vm.data.value?.prefs?.autoBackupFolder?.takeIf { it != uri.toString() }?.let { old ->
+                runCatching { contentResolver.releasePersistableUriPermission(Uri.parse(old), flags) }
+            }
+            vm.setAutoBackupFolder(uri.toString())
         }
 
     /** Settings > Data > Export calendar: interoperable RFC 5545 file. */
@@ -141,6 +162,7 @@ class MainActivity : FragmentActivity() {
         // Play builds update through the store; only GitHub builds self-check.
         if (BuildConfig.SELF_UPDATER) vm.checkForUpdates()
         vm.requestCalendarPermission = { calendarPermission.launch(Manifest.permission.READ_CALENDAR) }
+        vm.pickBackupFolder = { backupFolderLauncher.launch(null) }
         vm.bioPrompt = { title, subtitle, allowCredential, onSuccess ->
             Biometrics.prompt(
                 activity = this,
@@ -167,6 +189,7 @@ class MainActivity : FragmentActivity() {
             }
         }
         if (vm.hasCalendarOverlayEnabled()) vm.refreshDeviceCalendarData()
+        hideFromRecentsWhenPrivate()
         // Only on a genuinely fresh launch: on recreation (rotation, theme
         // change) getIntent() still carries the old shortcut action and would
         // re-fire it — reopening a dismissed editor or spawning another note.
@@ -246,16 +269,44 @@ class MainActivity : FragmentActivity() {
             vm.lockApp()
             vm.requestAppUnlock()
         }
+        if (lastStoppedAt != 0L && away > APP_LOCK_GRACE_MS) vm.relockNotes()
+        lifecycleScope.launch {
+            vm.data.first { it != null }
+            vm.runAutoBackup()
+        }
     }
 
     override fun onStop() {
         super.onStop()
+        vm.flushNoteEdits()
         lastStoppedAt = android.os.SystemClock.elapsedRealtime()
     }
 
     override fun onResume() {
         super.onResume()
         vm.refreshNow()
+    }
+
+    /**
+     * The recents thumbnail would otherwise show whatever was on screen. With
+     * app lock on, or a locked note open, it is blanked. Android 13+ can blank
+     * just the thumbnail; older versions need FLAG_SECURE, which also blocks
+     * screenshots, so there it's limited to an open locked note.
+     */
+    private fun hideFromRecentsWhenPrivate() {
+        lifecycleScope.launch {
+            combine(vm.data, snapshotFlow { vm.openNoteId }) { d, id ->
+                (d?.prefs?.appLock == true) to vm.lockedNoteOpen(d, id)
+            }.distinctUntilChanged().collect { (appLock, lockedOpen) ->
+                if (Build.VERSION.SDK_INT >= 33) {
+                    setRecentsScreenshotEnabled(!(appLock || lockedOpen))
+                } else if (lockedOpen) {
+                    window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                } else {
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                }
+            }
+        }
     }
 
     /** Write a UTF-8 document, explicitly truncating when the provider allows. */

@@ -8,7 +8,7 @@ implementation map).
 ## Features
 - **Today** — daily-planning command center with capacity, suggested timeline, rollover review and focus timer
 - **Calendar** — Month / Week / Day / Agenda views, events plus movable/resizable task time blocks
-- **Notes** — pinning + 4-digit-PIN-locked private notes
+- **Notes** — pinning + 4-digit-PIN-locked private notes (PIN stored as a salted hash)
 - **Tasks** — Overdue / Today / Upcoming / Someday checklist with collapsible Completed
 - Universal search, dark/light theme, 4 accent colors, 24h/12h time, week-start setting
 - Real system reminders: exact alarms + notifications, reboot/clock-change/permission-change recovery
@@ -17,14 +17,16 @@ implementation map).
 - Multiple work sessions per task, future-safe smart replanning, working hours and planned-versus-actual review
 - Seven-day Plan Ahead board with event-aware capacity, review-before-write auto-planning and safe repair when calendars or work hours change
 - Private productivity insights: focus trends, follow-through, streaks and category breakdowns
+- Repeats: daily, weekdays, weekly, every 2 weeks, monthly, yearly, with optional end dates and "this & later" edits
 - Widgets (including Daily Plan), biometric app/note unlock, recurring tasks, custom categories, soft-delete trash
+- Optional morning summary notification and daily dated backups to a folder of your choice
 - No accounts or servers: Room for domain records and DataStore for preferences/security settings, carried to a new phone by Android's Google backup (kept on deliberately)
 
 The persisted schema and mutation invariants are documented in
 [`DATA_MODEL.md`](DATA_MODEL.md).
 
 ## Build
-Toolchain lives in `C:\Users\matisse\android-toolchain\` (JDK 17, Android SDK 35, Gradle 8.14.2):
+Toolchain lives in `C:\Users\matisse\android-toolchain\` (JDK 17, Android SDK 36, Gradle 8.14.2):
 
 ```powershell
 $env:JAVA_HOME = "C:\Users\matisse\android-toolchain\jdk"

@@ -17,6 +17,9 @@ import kotlinx.serialization.json.Json
 
 private const val LEGACY_IMPORT_KEY = "legacy-app-data-v1"
 
+/** Stays well under SQLite's 999 bound-parameter limit. */
+private const val DELETE_CHUNK = 500
+
 @Entity(
     tableName = "events",
     indices = [Index("date"), Index("endDate")],
@@ -237,6 +240,39 @@ interface DomainDao {
 
     @Query("DELETE FROM focus_daily_totals")
     suspend fun clearFocusDailyTotals()
+
+    @Query("DELETE FROM events WHERE id IN (:ids)")
+    suspend fun deleteEvents(ids: List<String>)
+
+    @Query("DELETE FROM tasks WHERE id IN (:ids)")
+    suspend fun deleteTasks(ids: List<String>)
+
+    @Query("DELETE FROM notes WHERE id IN (:ids)")
+    suspend fun deleteNotes(ids: List<String>)
+
+    @Query("DELETE FROM task_blocks WHERE id IN (:ids)")
+    suspend fun deleteTaskBlocks(ids: List<String>)
+
+    @Query("DELETE FROM focus_sessions WHERE id IN (:ids)")
+    suspend fun deleteFocusSessions(ids: List<String>)
+}
+
+/**
+ * Row-level difference between two ordered lists keyed by id. A row is
+ * rewritten when its value or its position changed; ids missing from
+ * [after] are deleted. Typing in one note rewrites one row, not the table.
+ */
+internal data class RowDiff<T>(val removed: List<String>, val upserts: List<IndexedValue<T>>)
+
+internal fun <T> diffRows(before: List<T>, after: List<T>, id: (T) -> String): RowDiff<T> {
+    val old = HashMap<String, IndexedValue<T>>(before.size * 2)
+    before.withIndex().forEach { old[id(it.value)] = it }
+    val present = HashSet<String>(after.size * 2)
+    val upserts = after.withIndex().filter { row ->
+        present += id(row.value)
+        old[id(row.value)] != row
+    }
+    return RowDiff(old.keys.filter { it !in present }, upserts)
 }
 
 @Database(
@@ -350,14 +386,36 @@ class DomainStore(private val db: BentoDatabase) {
 
     /** Compatibility transforms rewrite only collections that actually changed. */
     suspend fun replaceChanged(before: AppData, after: AppData) = db.withTransaction {
-        if (before.events != after.events) replaceEvents(after.events)
-        if (before.tasks != after.tasks) replaceTasks(after.tasks)
-        if (before.notes != after.notes) replaceNotes(after.notes)
+        // The busy tables are written row by row; the small ones (and trash,
+        // whose ids are derived) are still rewritten whole.
+        if (before.events != after.events) {
+            val d = diffRows(before.events, after.events) { it.id }
+            d.removed.chunked(DELETE_CHUNK).forEach { dao.deleteEvents(it) }
+            dao.insertEvents(d.upserts.map { (index, item) -> eventRecord(index, item) })
+        }
+        if (before.tasks != after.tasks) {
+            val d = diffRows(before.tasks, after.tasks) { it.id }
+            d.removed.chunked(DELETE_CHUNK).forEach { dao.deleteTasks(it) }
+            dao.insertTasks(d.upserts.map { (index, item) -> taskRecord(index, item) })
+        }
+        if (before.notes != after.notes) {
+            val d = diffRows(before.notes, after.notes) { it.id }
+            d.removed.chunked(DELETE_CHUNK).forEach { dao.deleteNotes(it) }
+            dao.insertNotes(d.upserts.map { (index, item) -> noteRecord(index, item) })
+        }
         if (before.categories != after.categories) replaceCategories(after.categories)
         if (before.trash != after.trash) replaceTrash(after.trash)
-        if (before.taskBlocks != after.taskBlocks) replaceTaskBlocks(after.taskBlocks)
+        if (before.taskBlocks != after.taskBlocks) {
+            val d = diffRows(before.taskBlocks, after.taskBlocks) { it.id }
+            d.removed.chunked(DELETE_CHUNK).forEach { dao.deleteTaskBlocks(it) }
+            dao.insertTaskBlocks(d.upserts.map { taskBlockRecord(it.value) })
+        }
         if (before.dayPlans != after.dayPlans) replaceDayPlans(after.dayPlans)
-        if (before.focusSessions != after.focusSessions) replaceFocusSessions(after.focusSessions)
+        if (before.focusSessions != after.focusSessions) {
+            val d = diffRows(before.focusSessions, after.focusSessions) { it.id }
+            d.removed.chunked(DELETE_CHUNK).forEach { dao.deleteFocusSessions(it) }
+            dao.insertFocusSessions(d.upserts.map { focusSessionRecord(it.value) })
+        }
         if (before.focusDailyTotals != after.focusDailyTotals) replaceFocusDailyTotals(after.focusDailyTotals)
     }
 
@@ -373,25 +431,39 @@ class DomainStore(private val db: BentoDatabase) {
         replaceFocusDailyTotals(data.focusDailyTotals)
     }
 
+    private fun eventRecord(index: Int, item: EventItem) =
+        EventRecord(item.id, index, item.date, item.endDate, json.encodeToString(EventItem.serializer(), item))
+
+    private fun taskRecord(index: Int, item: TaskItem) =
+        TaskRecord(item.id, index, item.due, item.done, item.priority, json.encodeToString(TaskItem.serializer(), item))
+
+    private fun noteRecord(index: Int, item: NoteItem) =
+        NoteRecord(item.id, index, item.updated, item.pinned, item.locked, json.encodeToString(NoteItem.serializer(), item))
+
+    private fun taskBlockRecord(item: TaskBlock) = TaskBlockRecord(
+        item.id, item.taskId, item.occurrenceKey, item.date, item.startMin,
+        item.durationMin, item.state, item.createdAt,
+        json.encodeToString(TaskBlock.serializer(), item),
+    )
+
+    private fun focusSessionRecord(item: FocusSession) = FocusSessionRecord(
+        item.id, item.taskId, item.blockId, item.startedAt, item.endedAt,
+        item.outcome, json.encodeToString(FocusSession.serializer(), item),
+    )
+
     private suspend fun replaceEvents(items: List<EventItem>) {
         dao.clearEvents()
-        dao.insertEvents(items.mapIndexed { index, item ->
-            EventRecord(item.id, index, item.date, item.endDate, json.encodeToString(EventItem.serializer(), item))
-        })
+        dao.insertEvents(items.mapIndexed(::eventRecord))
     }
 
     private suspend fun replaceTasks(items: List<TaskItem>) {
         dao.clearTasks()
-        dao.insertTasks(items.mapIndexed { index, item ->
-            TaskRecord(item.id, index, item.due, item.done, item.priority, json.encodeToString(TaskItem.serializer(), item))
-        })
+        dao.insertTasks(items.mapIndexed(::taskRecord))
     }
 
     private suspend fun replaceNotes(items: List<NoteItem>) {
         dao.clearNotes()
-        dao.insertNotes(items.mapIndexed { index, item ->
-            NoteRecord(item.id, index, item.updated, item.pinned, item.locked, json.encodeToString(NoteItem.serializer(), item))
-        })
+        dao.insertNotes(items.mapIndexed(::noteRecord))
     }
 
     private suspend fun replaceCategories(items: List<Category>) {
@@ -411,13 +483,7 @@ class DomainStore(private val db: BentoDatabase) {
 
     private suspend fun replaceTaskBlocks(items: List<TaskBlock>) {
         dao.clearTaskBlocks()
-        dao.insertTaskBlocks(items.map { item ->
-            TaskBlockRecord(
-                item.id, item.taskId, item.occurrenceKey, item.date, item.startMin,
-                item.durationMin, item.state, item.createdAt,
-                json.encodeToString(TaskBlock.serializer(), item),
-            )
-        })
+        dao.insertTaskBlocks(items.map(::taskBlockRecord))
     }
 
     private suspend fun replaceDayPlans(items: List<DayPlan>) {
@@ -429,12 +495,7 @@ class DomainStore(private val db: BentoDatabase) {
 
     private suspend fun replaceFocusSessions(items: List<FocusSession>) {
         dao.clearFocusSessions()
-        dao.insertFocusSessions(items.map { item ->
-            FocusSessionRecord(
-                item.id, item.taskId, item.blockId, item.startedAt, item.endedAt,
-                item.outcome, json.encodeToString(FocusSession.serializer(), item),
-            )
-        })
+        dao.insertFocusSessions(items.map(::focusSessionRecord))
     }
 
     private suspend fun replaceFocusDailyTotals(items: List<FocusDailyTotal>) {

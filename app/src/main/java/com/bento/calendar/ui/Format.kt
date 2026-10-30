@@ -104,6 +104,14 @@ object Fmt {
         return "Edited ${d.dayOfMonth} ${MS[d.monthValue - 1]}"
     }
 
+    /** "today 14:02", "yesterday", "2 Jul" — last backup time. */
+    fun savedAt(ms: Long, now: LocalDateTime, use24h: Boolean): String {
+        val d = LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(ms), java.time.ZoneId.systemDefault())
+        if (d.toLocalDate() == now.toLocalDate()) return "today " + time(d.toLocalTime(), use24h)
+        if (d.toLocalDate() == now.toLocalDate().minusDays(1)) return "yesterday"
+        return "${d.dayOfMonth} ${MS[d.monthValue - 1]}"
+    }
+
     /** "14:02" if edited today, else "2 Jul" — note list timestamps. */
     fun editStamp(updatedMs: Long, today: LocalDate, use24h: Boolean): String {
         val d = LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(updatedMs), java.time.ZoneId.systemDefault())

@@ -38,9 +38,12 @@ off in your phone's backup settings.
 
 ## Locked notes
 
-Notes you lock with a PIN are hidden behind that PIN in the app. Exported
-backup files contain note content in readable form (your PIN itself is never
-exported) — treat backup files like the private documents they are.
+Notes you lock with a PIN are hidden behind that PIN in the app. The PIN is
+stored as a one-way scrambled value (a salted hash), not the digits
+themselves. Exported backup files, including the optional daily backup copies
+saved to a folder you choose, contain note content in readable form (your PIN
+itself is never exported) — treat backup files like the private documents
+they are.
 
 ## Children
 

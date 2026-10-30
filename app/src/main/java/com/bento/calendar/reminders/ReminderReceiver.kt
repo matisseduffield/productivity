@@ -53,6 +53,7 @@ class ReminderReceiver : BroadcastReceiver() {
          */
         private const val TASK_NOTIF_BIT = 0x40000000
         private const val BLOCK_NOTIF_BIT = 0x20000000
+        private const val SUMMARY_NOTIF_ID = 0x10000001
 
         private fun taskNotifId(taskId: String): Int = taskId.hashCode() or TASK_NOTIF_BIT
         private fun blockNotifId(blockId: String): Int = blockId.hashCode() or BLOCK_NOTIF_BIT
@@ -185,12 +186,15 @@ class ReminderReceiver : BroadcastReceiver() {
                 "Snooze 10 min",
                 snoozeIntent,
             ).build()
-            val builder = Notification.Builder(context, ReminderScheduler.CHANNEL_ID)
+            val channel = if (taskId != null) ReminderScheduler.TASK_CHANNEL_ID else ReminderScheduler.CHANNEL_ID
+            val builder = Notification.Builder(context, channel)
                 .setSmallIcon(R.drawable.ic_stat_bell)
                 .setContentTitle(title)
                 .setContentText(text)
                 .setContentIntent(tapIntent)
                 .setAutoCancel(true)
+                // Lets Do Not Disturb's "reminders"/"events" exceptions apply.
+                .setCategory(if (taskId != null) Notification.CATEGORY_REMINDER else Notification.CATEGORY_EVENT)
             if (taskId != null) {
                 val doneIntent = PendingIntent.getBroadcast(
                     context,
@@ -282,6 +286,12 @@ class ReminderReceiver : BroadcastReceiver() {
                                     date = date, now = now,
                                 ),
                             )
+                        }
+                    }
+                    data.prefs.dailySummaryAt?.let { at ->
+                        val fireMin = runCatching { toEpochMinutes(date.atTime(at.toTime())) }.getOrNull()
+                        if (fireMin != null && fireMin in (lastRun + 1)..windowEndMin) {
+                            nm.notify(SUMMARY_NOTIF_ID, buildSummaryNotification(context, dailySummary(data, date)))
                         }
                     }
                     val blockRemind = data.prefs.blockReminderMin
@@ -477,6 +487,24 @@ class ReminderReceiver : BroadcastReceiver() {
         return buildNotification(context, title, text, notifId, taskId)
     }
 
+    private fun buildSummaryNotification(context: Context, summary: DailySummary): Notification {
+        val tapIntent = PendingIntent.getActivity(
+            context, SUMMARY_NOTIF_ID,
+            Intent(context, MainActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val style = Notification.InboxStyle().setBigContentTitle(summary.title)
+        summary.lines.forEach { style.addLine(it) }
+        return Notification.Builder(context, ReminderScheduler.SUMMARY_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_stat_bell)
+            .setContentTitle(summary.title)
+            .setContentText(summary.text)
+            .setStyle(if (summary.lines.isEmpty()) null else style.setSummaryText(summary.text))
+            .setContentIntent(tapIntent)
+            .setAutoCancel(true)
+            .build()
+    }
+
     private fun buildBlockNotification(
         context: Context,
         title: String,
@@ -500,7 +528,7 @@ class ReminderReceiver : BroadcastReceiver() {
                 .putExtra(FocusTimer.EXTRA_SOURCE_NOTIFICATION_ID, notifId),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        return Notification.Builder(context, ReminderScheduler.CHANNEL_ID)
+        return Notification.Builder(context, ReminderScheduler.BLOCK_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_bell)
             .setContentTitle(title)
             .setContentText("Planned now · ${Fmt.time(com.bento.calendar.data.minsToHm(startMin), use24h)}")

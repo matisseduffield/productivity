@@ -65,6 +65,8 @@ data class EventItem(
      * Multi-day events never recur ([recur] is forced NONE on save).
      */
     val endDate: String? = null,
+    /** Last date (ISO) a repeating event can occur on; null = forever. */
+    val recurUntil: String? = null,
 ) {
     /** Last covered day when this is a valid multi-day span, else null. */
     fun spanEnd(): java.time.LocalDate? {
@@ -198,6 +200,12 @@ data class Prefs(
     val defaultTaskEstimateMin: Int = 30,
     /** Minutes before an internal task block starts; null disables it. */
     val blockReminderMin: Int? = 0,
+    /** Folder (SAF tree URI) for the daily backup copy; null = off. Device-specific. */
+    val autoBackupFolder: String? = null,
+    /** Wall-clock ms of the last successful daily backup. */
+    val lastAutoBackupAt: Long = 0,
+    /** Time ("HH:MM") of the morning summary notification; null = off. */
+    val dailySummaryAt: String? = null,
 )
 
 @Serializable
@@ -290,8 +298,27 @@ object FocusOutcome {
 object Recur {
     const val NONE = "none"
     const val DAILY = "daily"
+    /** Monday to Friday. */
+    const val WEEKDAYS = "weekdays"
     const val WEEKLY = "weekly"
+    /** Every two weeks on the start date's weekday. */
+    const val FORTNIGHTLY = "fortnightly"
     const val MONTHLY = "monthly"
+    /** Same month and day each year (Feb 29 repeats on leap years only). */
+    const val YEARLY = "yearly"
+
+    /** Every value the app understands, in picker order. */
+    val ALL = listOf(NONE, DAILY, WEEKDAYS, WEEKLY, FORTNIGHTLY, MONTHLY, YEARLY)
+
+    fun label(value: String): String = when (value) {
+        DAILY -> "Daily"
+        WEEKDAYS -> "Weekdays"
+        WEEKLY -> "Weekly"
+        FORTNIGHTLY -> "Every 2 weeks"
+        MONTHLY -> "Monthly"
+        YEARLY -> "Yearly"
+        else -> "Never"
+    }
 }
 
 @Serializable

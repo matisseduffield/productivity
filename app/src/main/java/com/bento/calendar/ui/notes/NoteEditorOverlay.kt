@@ -29,6 +29,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -92,12 +96,12 @@ fun NoteEditorOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                     .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                NabButton(active = false, onClick = vm::closeNote) {
+                NabButton(active = false, onClick = vm::closeNote, label = "Back") {
                     Icon(BentoIcons.ChevronLeft, null, tint = c.sub, modifier = Modifier.size(17.dp))
                 }
                 Spacer(Modifier.weight(1f))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    NabButton(active = note.pinned, onClick = vm::toggleNotePin) {
+                    NabButton(active = note.pinned, onClick = vm::toggleNotePin, label = if (note.pinned) "Unpin note" else "Pin note") {
                         Icon(
                             BentoIcons.PinTack,
                             null,
@@ -105,7 +109,7 @@ fun NoteEditorOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                             modifier = Modifier.size(16.dp),
                         )
                     }
-                    NabButton(active = note.locked, onClick = vm::toggleNoteLock) {
+                    NabButton(active = note.locked, onClick = vm::toggleNoteLock, label = if (note.locked) "Unlock note" else "Lock note") {
                         Icon(
                             BentoIcons.LockLight,
                             null,
@@ -113,7 +117,11 @@ fun NoteEditorOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                             modifier = Modifier.size(16.dp),
                         )
                     }
-                    NabButton(active = false, onClick = vm::deleteNote) {
+                    NabButton(
+                        active = false,
+                        onClick = vm::deleteNote,
+                        label = if (vm.isArmed(Arm.NOTE)) "Tap again to delete" else "Delete note",
+                    ) {
                         if (vm.isArmed(Arm.NOTE)) {
                             Text("Sure?", fontSize = 9.sp, fontWeight = FontWeight.W700, color = c.dng)
                         } else {
@@ -234,6 +242,7 @@ fun NoteEditorOverlay(vm: AppViewModel, data: AppData, now: LocalDateTime) {
 private fun NabButton(
     active: Boolean,
     onClick: () -> Unit,
+    label: String,
     content: @Composable BoxScope.() -> Unit,
 ) {
     val c = LocalBento.current
@@ -243,6 +252,10 @@ private fun NabButton(
         Modifier
             .size(36.dp)
             .pressable(onClick = onClick)
+            .semantics {
+                role = Role.Button
+                contentDescription = label
+            }
             .background(bg, CircleShape)
             .border(1.dp, border, CircleShape),
         contentAlignment = Alignment.Center,

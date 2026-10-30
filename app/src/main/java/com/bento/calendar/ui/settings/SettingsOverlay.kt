@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.sp
 import com.bento.calendar.data.Accents
 import com.bento.calendar.BuildConfig
 import com.bento.calendar.data.AppData
+import com.bento.calendar.data.AutoBackup
 import com.bento.calendar.reminders.ReminderHealth
 import com.bento.calendar.ui.AppViewModel
 import com.bento.calendar.ui.Fmt
@@ -249,6 +250,40 @@ fun SettingsOverlay(
                 // ---- Reminders ----
                 SectionLabel("Reminders")
                 ReminderHealthCard(now)
+                SettingsCard {
+                    val summaryAt = prefs.dailySummaryAt
+                    SettingsRow(
+                        icon = BentoIcons.Bell,
+                        title = "Morning summary",
+                        sub = if (summaryAt == null) "A notification with the day's events and tasks"
+                        else "Every day at " + Fmt.time(summaryAt, prefs.use24h),
+                        last = summaryAt == null,
+                    ) {
+                        BentoSwitch(
+                            on = summaryAt != null,
+                            onToggle = { vm.setDailySummary(if (summaryAt == null) "07:30" else null) },
+                            label = "Morning summary",
+                        )
+                    }
+                    if (summaryAt != null) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text("Time", fontSize = 12.sp, fontWeight = FontWeight.W700, color = c.tx)
+                            BentoTimeField(
+                                valueHm = summaryAt,
+                                display = Fmt.time(summaryAt, prefs.use24h),
+                                use24h = prefs.use24h,
+                                onPick = { vm.setDailySummary(it) },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                }
 
                 // ---- Calendar ----
                 SectionLabel("Calendar")
@@ -483,6 +518,27 @@ fun SettingsOverlay(
                         sub = "Everything, incl. locked notes, as a file",
                     ) {
                         TextLink("Export", onClick = onExport)
+                    }
+                    val backupFolder = prefs.autoBackupFolder
+                    SettingsRow(
+                        icon = BentoIcons.Download,
+                        title = "Daily backup",
+                        sub = when {
+                            backupFolder == null -> "Save a copy to a folder each day, last ${AutoBackup.KEEP} kept"
+                            !vm.autoBackupOk -> "Couldn't write to the folder — choose it again"
+                            prefs.lastAutoBackupAt <= 0 -> "On · first copy saves shortly"
+                            else -> "On · last saved " + Fmt.savedAt(prefs.lastAutoBackupAt, now, prefs.use24h)
+                        },
+                    ) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                            if (backupFolder != null) {
+                                TextLink("Off", onClick = { vm.setAutoBackupFolder(null) }, color = c.sub)
+                            }
+                            TextLink(
+                                if (backupFolder == null || !vm.autoBackupOk) "Choose" else "Change",
+                                onClick = { vm.pickBackupFolder?.invoke() },
+                            )
+                        }
                     }
                     // Import replaces the whole store, so it gets the app's
                     // two-tap confirm — kept local (remember + timeout) to

@@ -24,23 +24,42 @@ import java.time.ZoneId
  * survives reboots via BootReceiver.
  */
 object ReminderScheduler {
+    /** Event reminders. The id predates the split, so users keep their settings. */
     const val CHANNEL_ID = "reminders"
+    const val TASK_CHANNEL_ID = "task_reminders"
+    const val BLOCK_CHANNEL_ID = "planned_sessions"
+    const val SUMMARY_CHANNEL_ID = "daily_summary"
     private const val REQUEST_CODE = 1001
 
     /** How far ahead we search for the next occurrence. */
     private const val LOOKAHEAD_DAYS = 60L
 
+    /**
+     * Separate channels so each kind can have its own sound, or be silenced,
+     * in Android's notification settings.
+     */
     fun ensureChannel(context: Context) {
         val nm = context.getSystemService(NotificationManager::class.java)
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            "Event reminders",
-            NotificationManager.IMPORTANCE_HIGH,
-        ).apply {
-            description = "Reminders for calendar events and tasks"
-        }
-        nm.createNotificationChannel(channel)
+        nm.createNotificationChannels(
+            listOf(
+                NotificationChannel(CHANNEL_ID, "Event reminders", NotificationManager.IMPORTANCE_HIGH).apply {
+                    description = "Reminders before calendar events"
+                },
+                NotificationChannel(TASK_CHANNEL_ID, "Task reminders", NotificationManager.IMPORTANCE_HIGH).apply {
+                    description = "Reminders for tasks with a reminder time"
+                },
+                NotificationChannel(BLOCK_CHANNEL_ID, "Planned sessions", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                    description = "Nudges when a planned work session starts"
+                },
+                NotificationChannel(SUMMARY_CHANNEL_ID, "Morning summary", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                    description = "Today's events and tasks at a time you choose"
+                },
+            ),
+        )
     }
+
+    /** Channel ids for [ReminderHealth]; all of them should be switched on. */
+    val CHANNEL_IDS = listOf(CHANNEL_ID, TASK_CHANNEL_ID, BLOCK_CHANNEL_ID)
 
     fun pendingIntent(context: Context): PendingIntent = PendingIntent.getBroadcast(
         context,
@@ -75,6 +94,10 @@ object ReminderScheduler {
                 if (fireAt.isAfter(after) && (best == null || fireAt.isBefore(best))) {
                     best = fireAt
                 }
+            }
+            data.prefs.dailySummaryAt?.let { at ->
+                val fireAt = runCatching { date.atTime(at.toTime()) }.getOrNull()
+                if (fireAt != null && fireAt.isAfter(after) && (best == null || fireAt.isBefore(best))) best = fireAt
             }
             val blockRemind = data.prefs.blockReminderMin
             if (blockRemind != null) {

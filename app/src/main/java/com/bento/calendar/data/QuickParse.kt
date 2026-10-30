@@ -43,13 +43,16 @@ private fun priorityOf(token: String): Int = when (token.lowercase()) {
 }
 
 private val RECURRENCE_RE = Regex(
-    """\b(?:every|repeat)\s+(day|daily|week|weekly|month|monthly)\b""",
+    """\b(?:(?:every|repeat)\s+(weekday|weekdays|work\s?day|work\s?days|day|daily|other\s+week|2\s+weeks|two\s+weeks|fortnight|week|weekly|month|monthly|year|yearly|annually)|(fortnightly|annually|yearly))\b""",
     RegexOption.IGNORE_CASE,
 )
 
-private fun recurrenceOf(token: String): String = when (token.lowercase()) {
+private fun recurrenceOf(token: String): String = when (token.lowercase().replace(Regex("\\s+"), " ")) {
     "day", "daily" -> Recur.DAILY
+    "weekday", "weekdays", "workday", "workdays", "work day", "work days" -> Recur.WEEKDAYS
     "week", "weekly" -> Recur.WEEKLY
+    "other week", "2 weeks", "two weeks", "fortnight", "fortnightly" -> Recur.FORTNIGHTLY
+    "year", "yearly", "annually" -> Recur.YEARLY
     else -> Recur.MONTHLY
 }
 
@@ -223,7 +226,7 @@ fun parseQuickAdd(
     }
 
     RECURRENCE_RE.find(text)?.let { m ->
-        recur = recurrenceOf(m.groupValues[1])
+        recur = recurrenceOf(m.groupValues[1].ifEmpty { m.groupValues[2] })
         text = text.removeRange(m.range)
     }
 

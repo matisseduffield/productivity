@@ -79,10 +79,10 @@ fun NotesScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                GBtn(onClick = vm::openSearch) {
+                GBtn(onClick = vm::openSearch, label = "Search") {
                     Icon(BentoIcons.Search, null, tint = c.sub, modifier = Modifier.size(18.dp))
                 }
-                GBtn(onClick = vm::newNote, primary = true) {
+                GBtn(onClick = vm::newNote, primary = true, label = "New note") {
                     Icon(BentoIcons.PlusLight, null, tint = Color.White, modifier = Modifier.size(18.dp))
                 }
             }

@@ -10,17 +10,17 @@ plugins {
 
 android {
     namespace = "com.bento.calendar"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.bento.calendar"
         minSdk = 27
-        targetSdk = 35
+        targetSdk = 36
         // CI overrides these from the release tag (VERSION_NAME / VERSION_CODE
         // env) so the built APK's version always matches the tag it ships under
         // — a mismatch would make the app see itself as perpetually outdated.
-        versionCode = (System.getenv("VERSION_CODE") ?: "30402").toInt()
-        versionName = System.getenv("VERSION_NAME") ?: "3.4.2"
+        versionCode = (System.getenv("VERSION_CODE") ?: "30500").toInt()
+        versionName = System.getenv("VERSION_NAME") ?: "3.5.0"
     }
 
     signingConfigs {

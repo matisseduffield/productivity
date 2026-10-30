@@ -29,8 +29,9 @@ data class ReminderHealth(
         fun read(context: Context): ReminderHealth {
             val nm = context.getSystemService(NotificationManager::class.java)
             // A channel that doesn't exist yet is created enabled on first use.
-            val channelOn = nm.getNotificationChannel(ReminderScheduler.CHANNEL_ID)
-                ?.importance != NotificationManager.IMPORTANCE_NONE
+            val channelOn = ReminderScheduler.CHANNEL_IDS.all { id ->
+                nm.getNotificationChannel(id)?.importance != NotificationManager.IMPORTANCE_NONE
+            }
             val am = context.getSystemService(AlarmManager::class.java)
             val activity = context.getSystemService(ActivityManager::class.java)
             val power = context.getSystemService(PowerManager::class.java)

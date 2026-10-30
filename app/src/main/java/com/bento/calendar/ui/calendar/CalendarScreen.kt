@@ -299,13 +299,13 @@ private fun CalendarHeader(vm: AppViewModel, data: AppData) {
             ) {
                 Text("Today", fontSize = 11.sp, fontWeight = FontWeight.W700, color = c.acc)
             }
-            GBtn(onClick = { vm.calPrev() }) {
+            GBtn(onClick = { vm.calPrev() }, label = "Previous") {
                 Icon(BentoIcons.ChevronLeft, null, tint = c.sub, modifier = Modifier.size(17.dp))
             }
-            GBtn(onClick = { vm.calNext() }) {
+            GBtn(onClick = { vm.calNext() }, label = "Next") {
                 Icon(BentoIcons.ChevronRight, null, tint = c.sub, modifier = Modifier.size(17.dp))
             }
-            GBtn(onClick = { vm.newEvent() }, primary = true) {
+            GBtn(onClick = { vm.newEvent() }, primary = true, label = "New event") {
                 Icon(BentoIcons.Plus, null, tint = Color.White, modifier = Modifier.size(18.dp))
             }
         }
@@ -454,6 +454,7 @@ private fun CalendarTaskRow(vm: AppViewModel, t: TaskItem) {
             onToggle = { vm.toggleTask(t.id) },
             size = 17.dp,
             corner = 6.dp,
+            label = t.title,
         )
         Priority.colorHex(t.priority)?.let { Dot(hexColor(it), size = 5.dp) }
         Text(

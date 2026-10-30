@@ -92,10 +92,10 @@ fun TasksScreen(vm: AppViewModel, data: AppData, now: LocalDateTime) {
                 )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                GBtn(onClick = { vm.openSearch() }) {
+                GBtn(onClick = { vm.openSearch() }, label = "Search") {
                     Icon(BentoIcons.Search, null, tint = c.sub, modifier = Modifier.size(18.dp))
                 }
-                GBtn(onClick = { vm.newTask() }, primary = true) {
+                GBtn(onClick = { vm.newTask() }, primary = true, label = "New task") {
                     Icon(BentoIcons.PlusLight, null, tint = Color.White, modifier = Modifier.size(18.dp))
                 }
             }
@@ -232,7 +232,7 @@ private fun TaskRow(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                BentoCheckbox(checked = task.done, onToggle = onToggle, size = 22.dp, corner = 8.dp)
+                BentoCheckbox(checked = task.done, onToggle = onToggle, size = 22.dp, corner = 8.dp, label = task.title)
                 Column(
                     Modifier
                         .weight(1f)
@@ -370,6 +370,7 @@ private fun TaskRow(
                             onToggle = { onToggleSub(s.id) },
                             size = 16.dp,
                             corner = 6.dp,
+                            label = s.title,
                         )
                         Text(
                             s.title,

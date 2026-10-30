@@ -94,8 +94,8 @@ class IcsTest {
         )
         val text = (
             listOf("BEGIN:VCALENDAR", "VERSION:2.0") +
-                vevent("birthday", "FREQ=YEARLY") +
-                vevent("fortnightly", "FREQ=WEEKLY;INTERVAL=2") +
+                vevent("second-tuesday", "FREQ=MONTHLY;BYDAY=2TU") +
+                vevent("every-third-week", "FREQ=WEEKLY;INTERVAL=3") +
                 vevent("weekly", "FREQ=WEEKLY") +
                 vevent("once", null) +
                 listOf("END:VCALENDAR")
@@ -175,7 +175,7 @@ END:VEVENT""",
     }
 
     @Test
-    fun `bounded recurrence degrades to its concrete first event instead of becoming infinite`() {
+    fun `counted recurrence ends on its last counted date instead of becoming infinite`() {
         val text = calendar(
             """BEGIN:VEVENT
 UID:bounded@example.com
@@ -187,7 +187,8 @@ END:VEVENT""",
         )
         val event = importEventsFromIcs(text, Cats.DEFAULTS, localZone = ZoneOffset.UTC)
             .events.single()
-        assertEquals(Recur.NONE, event.recur)
+        assertEquals(Recur.DAILY, event.recur)
+        assertEquals("2026-07-16", event.recurUntil)
     }
 
     @Test

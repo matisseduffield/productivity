@@ -41,6 +41,26 @@ data class ChangelogEntry(val version: String, val date: String, val changes: Li
 
 val CHANGELOG = listOf(
     ChangelogEntry(
+        "3.5.0", "October 2026",
+        listOf(
+            "New repeat options for events and tasks: weekdays, every 2 weeks and yearly",
+            "Repeating events can end on a date, and edits or deletes can apply to “this & later” occurrences",
+            "Quick Add understands “every weekday”, “fortnightly”, “every 2 weeks” and “every year”",
+            "Completing a task can be undone from the banner — handy for repeating tasks that jump ahead",
+            "Duplicate any event or task from its editor",
+            "Optional morning summary notification with the day's events and tasks",
+            "Daily backup: keep a dated copy in a folder you choose, with the last 7 days kept",
+            "Your notes PIN is now stored scrambled, asks you to type it twice when set, and pauses after repeated wrong tries",
+            "Locked notes lock again after you've been away, and private screens are hidden from the recent apps view",
+            "Restoring a backup file keeps this phone's notes PIN instead of removing it",
+            "Event, task and planned-session reminders have their own notification channels, so each can sound different",
+            "Typing in notes and other edits save faster on large calendars",
+            "Better TalkBack support: checkboxes, switches and icon buttons are announced properly",
+            "Calendar files keep yearly, fortnightly and weekday repeats, end dates and counted series",
+            "Updated for Android 16",
+        ),
+    ),
+    ChangelogEntry(
         "3.4.2", "October 2026",
         listOf(
             "Monthly tasks keep their day: a task on the 31st goes to Feb 28 and back to Mar 31 instead of sticking on the 28th",

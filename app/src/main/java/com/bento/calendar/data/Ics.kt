@@ -93,10 +93,23 @@ fun exportEventsToIcs(
                 lines += "DTEND:${dateTimeValue(lastDate ?: startDate, event.end.toTime())}"
             }
 
-            when (event.recur) {
-                Recur.DAILY -> lines += "RRULE:FREQ=DAILY"
-                Recur.WEEKLY -> lines += "RRULE:FREQ=WEEKLY"
-                Recur.MONTHLY -> lines += "RRULE:FREQ=MONTHLY"
+            val rule = when (event.recur) {
+                Recur.DAILY -> "FREQ=DAILY"
+                Recur.WEEKDAYS -> "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
+                Recur.WEEKLY -> "FREQ=WEEKLY"
+                Recur.FORTNIGHTLY -> "FREQ=WEEKLY;INTERVAL=2"
+                Recur.MONTHLY -> "FREQ=MONTHLY"
+                Recur.YEARLY -> "FREQ=YEARLY"
+                else -> null
+            }
+            if (rule != null) {
+                // UNTIL must match DTSTART's value type: a date for all-day
+                // events, a floating local date-time otherwise.
+                val until = event.recurUntil?.toDate()?.let {
+                    if (event.allDay) ";UNTIL=${DATE_FMT.format(it)}"
+                    else ";UNTIL=${dateTimeValue(it, LocalTime.of(23, 59, 59))}"
+                }.orEmpty()
+                lines += "RRULE:$rule$until"
             }
             if (event.exDates.isNotEmpty() && event.recur != Recur.NONE) {
                 val values = event.exDates.distinct().sorted().map { excluded ->
@@ -290,10 +303,11 @@ private fun decodeEvent(
     else rawBlock.joinToString("\n")
     val id = bentoId ?: stableIcsId("$uid|$recurrenceId|$stableKey")
 
-    val recurrence = simpleRecurrence(first("RRULE")?.value, start.date)
+    val rule = simpleRecurrence(first("RRULE")?.value, start.date, localZone)
     // A multi-day span and recurrence cannot coexist in Bento. Preserve the
     // concrete span, which is safer than turning it into an infinite series.
-    val recur = if (endDate != null) Recur.NONE else recurrence
+    val recur = if (endDate != null) Recur.NONE else rule.recur
+    val recurUntil = if (recur == Recur.NONE) null else rule.until
     val exDates = if (recur == Recur.NONE) emptyList() else {
         properties.filter { it.name == "EXDATE" }
             .flatMap { property ->
@@ -324,7 +338,25 @@ private fun decodeEvent(
         allDay = allDay,
         exDates = exDates,
         endDate = endDate?.toIso(),
-    )
+        recurUntil = recurUntil?.toIso(),
+    ).let { event ->
+        // COUNT is converted to the date of the last counted occurrence.
+        if (recur == Recur.NONE || rule.count == null) event
+        else event.copy(recurUntil = lastCountedOccurrence(event, rule.count)?.toIso() ?: return null)
+    }
+}
+
+private fun lastCountedOccurrence(event: EventItem, count: Int): LocalDate? {
+    if (count <= 0) return null
+    var seen = 0
+    var day = event.date.toDate()
+    // Fifty years is far beyond any realistic counted series.
+    repeat(366 * 50) {
+        // exDates don't consume the count in RFC 5545, so test the bare rule.
+        if (event.copy(exDates = emptyList()).occursOn(day) && ++seen == count) return day
+        day = day.plusDays(1)
+    }
+    return null
 }
 
 private fun categoryFor(properties: List<IcsProperty>, categories: List<Category>): String {
@@ -340,28 +372,59 @@ private fun categoryFor(properties: List<IcsProperty>, categories: List<Category
     return categories.firstOrNull()?.id ?: Cats.WORK
 }
 
-private fun simpleRecurrence(value: String?, start: LocalDate): String {
-    if (value.isNullOrBlank()) return Recur.NONE
+private data class SimpleRule(val recur: String, val until: LocalDate? = null, val count: Int? = null)
+
+private val WEEKDAY_CODES = setOf("MO", "TU", "WE", "TH", "FR")
+
+private fun simpleRecurrence(value: String?, start: LocalDate, localZone: ZoneId): SimpleRule {
+    val none = SimpleRule(Recur.NONE)
+    if (value.isNullOrBlank()) return none
     val parts = value.split(';').mapNotNull {
         val index = it.indexOf('=')
         if (index <= 0) null else it.substring(0, index).uppercase(Locale.ROOT) to
             it.substring(index + 1).uppercase(Locale.ROOT)
     }.toMap()
-    if (parts["INTERVAL"]?.toIntOrNull()?.let { it != 1 } == true) return Recur.NONE
-    if ("COUNT" in parts || "UNTIL" in parts) return Recur.NONE
+    val interval = parts["INTERVAL"]?.toIntOrNull() ?: 1
+    val until = parts["UNTIL"]?.let { parseStamp(IcsProperty("UNTIL", emptyMap(), it), localZone)?.date }
+    if ("UNTIL" in parts && until == null) return none
+    val count = parts["COUNT"]?.toIntOrNull()
+    if ("COUNT" in parts && (count == null || count <= 0)) return none
+    val extraBy = parts.keys.filter { it.startsWith("BY") }
 
-    return when (parts["FREQ"]) {
-        "DAILY" -> if (parts.keys.none { it.startsWith("BY") }) Recur.DAILY else Recur.NONE
+    val recur = when (parts["FREQ"]) {
+        "DAILY" -> if (interval == 1 && extraBy.isEmpty()) Recur.DAILY else Recur.NONE
         "WEEKLY" -> {
             val byDay = parts["BYDAY"]?.split(',')
-            if (byDay == null || byDay == listOf(dayCode(start))) Recur.WEEKLY else Recur.NONE
+            val onlyByDay = extraBy.all { it == "BYDAY" || it == "WKST" }
+            when {
+                !onlyByDay -> Recur.NONE
+                byDay != null && byDay.toSet() == WEEKDAY_CODES && interval == 1 -> Recur.WEEKDAYS
+                byDay != null && byDay != listOf(dayCode(start)) -> Recur.NONE
+                interval == 1 -> Recur.WEEKLY
+                interval == 2 -> Recur.FORTNIGHTLY
+                else -> Recur.NONE
+            }
         }
         "MONTHLY" -> {
             val monthDay = parts["BYMONTHDAY"]?.toIntOrNull()
-            if (monthDay == null || monthDay == start.dayOfMonth) Recur.MONTHLY else Recur.NONE
+            val ok = interval == 1 && extraBy.all { it == "BYMONTHDAY" } &&
+                (monthDay == null || monthDay == start.dayOfMonth)
+            if (ok) Recur.MONTHLY else Recur.NONE
+        }
+        "YEARLY" -> {
+            val month = parts["BYMONTH"]?.toIntOrNull()
+            val monthDay = parts["BYMONTHDAY"]?.toIntOrNull()
+            val ok = interval == 1 && extraBy.all { it == "BYMONTH" || it == "BYMONTHDAY" } &&
+                (month == null || month == start.monthValue) &&
+                (monthDay == null || monthDay == start.dayOfMonth)
+            if (ok) Recur.YEARLY else Recur.NONE
         }
         else -> Recur.NONE
     }
+    if (recur == Recur.NONE) return none
+    // A series that ends before it starts is just its first event.
+    if (until != null && until.isBefore(start)) return none
+    return SimpleRule(recur, until, count)
 }
 
 private fun dayCode(date: LocalDate): String =
