@@ -70,6 +70,13 @@ class AppFlowTest {
 
     private fun AppViewModel.type(pin: String) = pin.forEach { pinPress(it.toString()) }
 
+    /** The editor opens once the store has the note, but [AppViewModel.data] catches up a moment later. */
+    private fun AppViewModel.createNote(): String {
+        newNote()
+        settle { openNoteId != null && data.value!!.notes.any { it.id == openNoteId } }
+        return openNoteId!!
+    }
+
     @Test
     fun `PIN is confirmed, stored hashed and checked`() {
         val vm = viewModel()
@@ -96,9 +103,7 @@ class AppFlowTest {
     @Test
     fun `note typing is buffered, then saved, and a blank note is discarded`() {
         val vm = viewModel()
-        vm.newNote()
-        settle { vm.openNoteId != null }
-        val id = vm.openNoteId!!
+        val id = vm.createNote()
         vm.setNoteTitle("Shopping")
         vm.setNoteBody("eggs")
         settle { true }
@@ -112,9 +117,7 @@ class AppFlowTest {
         vm.closeNote()
         settle { vm.data.value!!.notes.first { it.id == id }.body == "eggs and milk" }
 
-        vm.newNote()
-        settle { vm.openNoteId != null }
-        val blank = vm.openNoteId!!
+        val blank = vm.createNote()
         vm.closeNote()
         settle { vm.data.value!!.notes.none { it.id == blank } }
     }
