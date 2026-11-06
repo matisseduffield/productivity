@@ -58,8 +58,10 @@ fun nextTaskDue(recur: String, anchor: LocalDate, monthDay: Int): LocalDate = wh
 
 /**
  * Completing a repeating task advances its due date to the next occurrence
- * (anchored to today when it has none or is overdue) instead of marking it
- * done. Shared by the app's toggle and the widget's checkbox action.
+ * instead of marking it done. An overdue task stays on its own cycle, so an
+ * every-Monday task finished on a Wednesday is next due on a Monday; with no
+ * due date the cycle starts today. Shared by the app's toggle and the
+ * widget's checkbox action.
  */
 fun completeTask(data: AppData, taskId: String, today: LocalDate): AppData =
     data.copy(
@@ -68,11 +70,13 @@ fun completeTask(data: AppData, taskId: String, today: LocalDate): AppData =
             if (t.done || t.recur == Recur.NONE) {
                 t.copy(done = !t.done)
             } else {
-                val anchor = t.due?.toDate()?.takeIf { !it.isBefore(today) } ?: today
+                val base = t.due?.toDate() ?: today
                 // Older monthly tasks have no stored day: adopt the current
                 // due day once so later short months can't erode it.
-                val monthDay = t.recurDay ?: t.due?.toDate()?.dayOfMonth ?: anchor.dayOfMonth
-                val next = nextTaskDue(t.recur, anchor, monthDay)
+                val monthDay = t.recurDay ?: base.dayOfMonth
+                val next = generateSequence(nextTaskDue(t.recur, base, monthDay)) {
+                    nextTaskDue(t.recur, it, monthDay)
+                }.first { it.isAfter(today) }
                 // The next occurrence starts with a fresh checklist.
                 t.copy(
                     due = next.toIso(),

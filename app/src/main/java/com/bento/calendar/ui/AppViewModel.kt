@@ -1,6 +1,7 @@
 ﻿package com.bento.calendar.ui
 
 import android.app.Application
+import android.content.Intent
 import android.os.SystemClock
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -907,7 +908,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val blocks = before.taskBlocks.filter { it.taskId == id }.associateBy { it.id }
             offerUndo(UNDO_DONE) { x ->
                 x.copy(
-                    tasks = x.tasks.map { if (it.id == id) task else it },
+                    tasks = x.tasks.map {
+                        if (it.id == id) it.copy(done = task.done, due = task.due, subs = task.subs, recurDay = task.recurDay) else it
+                    },
                     taskBlocks = x.taskBlocks.map { b -> blocks[b.id] ?: b },
                 )
             }
@@ -1896,6 +1899,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setAutoBackupFolder(uri: String?) {
         autoBackupOk = true
+        // Don't keep access to a folder that's no longer used.
+        prefs().autoBackupFolder?.takeIf { it != uri }?.let { old ->
+            val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            runCatching {
+                getApplication<Application>().contentResolver
+                    .releasePersistableUriPermission(android.net.Uri.parse(old), flags)
+            }
+        }
         mutPrefs { it.copy(autoBackupFolder = uri, lastAutoBackupAt = 0) }
         if (uri != null) runAutoBackup(force = true, folder = uri)
     }

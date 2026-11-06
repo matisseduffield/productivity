@@ -1,8 +1,10 @@
 package com.bento.calendar
 
 import com.bento.calendar.data.AppData
+import com.bento.calendar.data.DeviceEvent
 import com.bento.calendar.data.EventItem
 import com.bento.calendar.data.Prefs
+import com.bento.calendar.data.Recur
 import com.bento.calendar.data.TaskItem
 import com.bento.calendar.reminders.ReminderScheduler
 import com.bento.calendar.reminders.dailySummary
@@ -39,6 +41,37 @@ class DailySummaryTest {
         val lines = dailySummary(busy, day).lines
         assertEquals(6, lines.size)
         assertEquals("+4 more", lines.last())
+    }
+
+    @Test
+    fun `device calendar events are merged in time order`() {
+        val data = AppData(
+            events = listOf(EventItem(id = "a", title = "Gym", date = "2026-10-30", start = "18:00", end = "19:00")),
+        )
+        val device = DeviceEvent(
+            id = 1, title = "Dentist", date = "2026-10-30", start = "10:00", end = "11:00",
+            allDay = false, colorHex = "#000000", calName = "Personal", loc = "",
+        )
+        val s = dailySummary(data, day, listOf(device))
+        assertEquals("2 events", s.text)
+        assertEquals(listOf("10:00  Dentist", "18:00  Gym"), s.lines)
+    }
+
+    @Test
+    fun `with nothing ahead the chain still wakes to look again`() {
+        val now = LocalDateTime.of(2026, 10, 30, 8, 0)
+        val birthday = EventItem(
+            id = "b", title = "Birthday", date = "2026-03-14", start = "09:00", end = "10:00",
+            recur = Recur.YEARLY, remind = 0,
+        )
+        val data = AppData(events = listOf(birthday))
+        assertEquals(null, ReminderScheduler.nextReminderTime(data, now))
+        assertEquals(now.plusDays(60), ReminderScheduler.nextWakeTime(data, now))
+        // Looking again from there finds it.
+        assertEquals(
+            LocalDateTime.of(2027, 3, 14, 9, 0),
+            ReminderScheduler.nextWakeTime(data, LocalDateTime.of(2027, 1, 20, 8, 0)),
+        )
     }
 
     @Test

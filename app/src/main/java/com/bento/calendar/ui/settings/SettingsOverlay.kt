@@ -524,7 +524,7 @@ fun SettingsOverlay(
                         icon = BentoIcons.Download,
                         title = "Daily backup",
                         sub = when {
-                            backupFolder == null -> "Save a copy to a folder each day, last ${AutoBackup.KEEP} kept"
+                            backupFolder == null -> "Daily copy to a folder, incl. locked notes, last ${AutoBackup.KEEP} kept"
                             !vm.autoBackupOk -> "Couldn't write to the folder — choose it again"
                             prefs.lastAutoBackupAt <= 0 -> "On · first copy saves shortly"
                             else -> "On · last saved " + Fmt.savedAt(prefs.lastAutoBackupAt, now, prefs.use24h)

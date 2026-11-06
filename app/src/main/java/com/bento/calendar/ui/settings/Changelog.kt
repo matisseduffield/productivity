@@ -41,6 +41,17 @@ data class ChangelogEntry(val version: String, val date: String, val changes: Li
 
 val CHANGELOG = listOf(
     ChangelogEntry(
+        "3.5.1", "November 2026",
+        listOf(
+            "An overdue weekly, fortnightly or yearly task now stays on its own day instead of shifting to the day you finished it",
+            "Reminders for events more than two months away now fire even if you don't open the app in between",
+            "The morning summary now includes your device calendars, and never shows yesterday's day if your phone was off",
+            "Undoing a completed task no longer reverses edits you made while the Undo banner was waiting",
+            "Turning Daily backup off now gives up access to that folder",
+            "TalkBack now announces the bottom tabs as tabs and says which one is selected",
+        ),
+    ),
+    ChangelogEntry(
         "3.5.0", "October 2026",
         listOf(
             "New repeat options for events and tasks: weekdays, every 2 weeks and yearly",

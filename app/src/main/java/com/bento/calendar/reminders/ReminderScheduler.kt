@@ -118,11 +118,19 @@ object ReminderScheduler {
         return best
     }
 
+    /**
+     * When the chain should next wake. With nothing inside the lookahead it
+     * still wakes at the end of it to look again; otherwise a yearly event's
+     * reminder months away would never be armed unless the app was reopened.
+     */
+    fun nextWakeTime(data: AppData, after: LocalDateTime): LocalDateTime =
+        nextReminderTime(data, after) ?: after.plusDays(LOOKAHEAD_DAYS)
+
     fun reschedule(context: Context, data: AppData) {
         val am = context.getSystemService(AlarmManager::class.java) ?: return
         val pi = pendingIntent(context)
         am.cancel(pi)
-        val next = nextReminderTime(data, LocalDateTime.now()) ?: return
+        val next = nextWakeTime(data, LocalDateTime.now())
         val millis = next.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
         val canExact = Build.VERSION.SDK_INT < 31 || am.canScheduleExactAlarms()
         if (canExact) {

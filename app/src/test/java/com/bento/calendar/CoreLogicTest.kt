@@ -291,6 +291,21 @@ class RecurringTaskTest {
     }
 
     @Test
+    fun `overdue weekly task stays on its weekday`() {
+        // 2026-06-22 is a Monday; finished on Thursday 2 July.
+        val d = data(TaskItem(id = "a", title = "a", due = "2026-06-22", recur = Recur.WEEKLY))
+        assertEquals("2026-07-06", com.bento.calendar.data.completeTask(d, "a", today).tasks[0].due)
+    }
+
+    @Test
+    fun `overdue fortnightly and yearly tasks stay on their cycle`() {
+        val f = data(TaskItem(id = "a", title = "a", due = "2026-06-22", recur = Recur.FORTNIGHTLY))
+        assertEquals("2026-07-06", com.bento.calendar.data.completeTask(f, "a", today).tasks[0].due)
+        val y = data(TaskItem(id = "a", title = "a", due = "2025-03-14", recur = Recur.YEARLY))
+        assertEquals("2027-03-14", com.bento.calendar.data.completeTask(y, "a", today).tasks[0].due)
+    }
+
+    @Test
     fun `recurring task with no due anchors to today`() {
         val d = data(TaskItem(id = "a", title = "a", recur = Recur.MONTHLY))
         val out = com.bento.calendar.data.completeTask(d, "a", today)

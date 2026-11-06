@@ -61,7 +61,9 @@ or `agenda`) so the user's working view survives a process restart.
 - Priority is an integer from 0 (none) through 3 (high).
 - Checklist step ids are stable inside the task.
 - Completing a recurring task advances its due date and resets its checklist
-  instead of marking it permanently complete.
+  instead of marking it permanently complete. The new date is the first one
+  after today on the task's own cycle, so an overdue every-Monday task stays
+  on Mondays.
 - Monthly tasks store `recurDay` (1–31). The next due date is the first date
   after the anchor on that day, clamped to short months, so the 31st becomes
   Feb 28 and then Mar 31 again. Older tasks adopt their current due day on

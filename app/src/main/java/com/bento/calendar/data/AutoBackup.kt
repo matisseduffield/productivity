@@ -6,9 +6,11 @@ import android.provider.DocumentsContract
 import java.time.LocalDate
 
 /**
- * Daily copy of the full backup file into a folder the user picked (Drive,
- * a USB stick, Downloads...). Complements Android's own Google backup, which
- * the user can't browse or restore a single day from.
+ * Daily copy of the full backup file into a folder the user picked,
+ * written the first time the app opens each day. Complements Android's own
+ * Google backup, which the user can't browse or restore a single day from.
+ * Android's folder picker only offers providers that allow folder access:
+ * phone storage does (though not the top of Downloads), Google Drive may not.
  *
  * Files are named by date, so a day's backup is overwritten in place and the
  * oldest beyond [KEEP] are removed. Only files matching that name pattern are

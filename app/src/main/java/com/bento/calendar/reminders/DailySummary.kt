@@ -1,6 +1,7 @@
 package com.bento.calendar.reminders
 
 import com.bento.calendar.data.AppData
+import com.bento.calendar.data.DeviceEvent
 import com.bento.calendar.data.occurrencesOn
 import com.bento.calendar.data.toIso
 import com.bento.calendar.ui.Fmt
@@ -12,14 +13,15 @@ data class DailySummary(val title: String, val text: String, val lines: List<Str
 /** Lines past this are folded into "+N more" so the notification stays readable. */
 private const val MAX_LINES = 6
 
-fun dailySummary(data: AppData, date: LocalDate): DailySummary {
-    val events = occurrencesOn(data.events, date)
+fun dailySummary(data: AppData, date: LocalDate, deviceEvents: List<DeviceEvent> = emptyList()): DailySummary {
+    val events = occurrencesOn(data.events, date).map { Line(it.start, it.allDay, it.title) } +
+        deviceEvents.map { Line(it.start, it.allDay, it.title) }
     val iso = date.toIso()
     val open = data.tasks.filter { !it.done && it.due != null }
     val dueToday = open.filter { it.due == iso }
     val overdue = open.count { it.due!! < iso }
 
-    val eventLines = events.map { e ->
+    val eventLines = events.sortedBy { it.start }.map { e ->
         val time = if (e.allDay) "All day" else Fmt.time(e.start, data.prefs.use24h)
         "$time  ${e.title.ifBlank { "Untitled" }}"
     }
@@ -35,5 +37,7 @@ fun dailySummary(data: AppData, date: LocalDate): DailySummary {
     val text = if (parts.isEmpty()) "Nothing scheduled — a clear day" else parts.joinToString(" · ")
     return DailySummary(title = "Today · " + Fmt.dayShort(date), text = text, lines = lines)
 }
+
+private data class Line(val start: String, val allDay: Boolean, val title: String)
 
 private fun plural(n: Int, word: String) = "$n $word" + if (n == 1) "" else "s"

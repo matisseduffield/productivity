@@ -92,10 +92,6 @@ class MainActivity : FragmentActivity() {
                 Toast.makeText(this, "That folder can't be used for backups", Toast.LENGTH_SHORT).show()
                 return@registerForActivityResult
             }
-            // Release the previous folder so permissions don't pile up.
-            vm.data.value?.prefs?.autoBackupFolder?.takeIf { it != uri.toString() }?.let { old ->
-                runCatching { contentResolver.releasePersistableUriPermission(Uri.parse(old), flags) }
-            }
             vm.setAutoBackupFolder(uri.toString())
         }
 

@@ -16,6 +16,7 @@ import com.bento.calendar.data.Recur
 import com.bento.calendar.data.TaskItem
 import com.bento.calendar.data.completeTaskWithBlocks
 import com.bento.calendar.data.BlockState
+import com.bento.calendar.data.DeviceCalendars
 import com.bento.calendar.focus.FocusTimer
 import com.bento.calendar.data.occurrencesOn
 import com.bento.calendar.data.toDate
@@ -290,8 +291,15 @@ class ReminderReceiver : BroadcastReceiver() {
                     }
                     data.prefs.dailySummaryAt?.let { at ->
                         val fireMin = runCatching { toEpochMinutes(date.atTime(at.toTime())) }.getOrNull()
-                        if (fireMin != null && fireMin in (lastRun + 1)..windowEndMin) {
-                            nm.notify(SUMMARY_NOTIF_ID, buildSummaryNotification(context, dailySummary(data, date)))
+                        // A phone off past the summary time skips that day's;
+                        // "Today" must never describe yesterday.
+                        if (date == now.toLocalDate() && fireMin != null && fireMin in (lastRun + 1)..windowEndMin) {
+                            val device = if (data.prefs.deviceCalsEnabled) {
+                                DeviceCalendars.eventsBetween(context, date, date, data.prefs.deviceCalIds)[iso].orEmpty()
+                            } else {
+                                emptyList()
+                            }
+                            nm.notify(SUMMARY_NOTIF_ID, buildSummaryNotification(context, dailySummary(data, date, device)))
                         }
                     }
                     val blockRemind = data.prefs.blockReminderMin

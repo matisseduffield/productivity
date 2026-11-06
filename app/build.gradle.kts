@@ -19,8 +19,8 @@ android {
         // CI overrides these from the release tag (VERSION_NAME / VERSION_CODE
         // env) so the built APK's version always matches the tag it ships under
         // — a mismatch would make the app see itself as perpetually outdated.
-        versionCode = (System.getenv("VERSION_CODE") ?: "30500").toInt()
-        versionName = System.getenv("VERSION_NAME") ?: "3.5.0"
+        versionCode = (System.getenv("VERSION_CODE") ?: "30501").toInt()
+        versionName = System.getenv("VERSION_NAME") ?: "3.5.1"
     }
 
     signingConfigs {
@@ -88,6 +88,10 @@ android {
         compose = true
         buildConfig = true
     }
+    // Robolectric tests run the real app on the JVM and need its resources.
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
 }
 
 dependencies {
@@ -113,4 +117,8 @@ dependencies {
     ksp(libs.androidx.room.compiler)
     testImplementation(libs.junit)
     testImplementation(libs.androidx.room.testing)
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.androidx.compose.ui.test.junit4)
 }

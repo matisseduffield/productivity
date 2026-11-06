@@ -27,6 +27,10 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalView
@@ -218,6 +222,10 @@ private fun TabItem(vm: AppViewModel, tab: Tab, label: String, icon: ImageVector
     Row(
         modifier
             .pressable { vm.setTab(tab) }
+            .semantics {
+                role = Role.Tab
+                selected = active
+            }
             .background(if (active) c.accTint(0.15f) else androidx.compose.ui.graphics.Color.Transparent, RoundedCornerShape(17.dp))
             .padding(vertical = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
